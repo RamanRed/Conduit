@@ -7,6 +7,7 @@ import json
 
 from app.database import get_db
 from app.services import validation_service, mcp_service, ai_service, gateway_service
+from app.services import context_retrieval_service  # Phase 1 — build & store context bundle
 from app.models import Proposal
 from app.schemas import ProposalResponse, DriftItem
 from typing import Optional
@@ -248,6 +249,25 @@ async def ingest_file(
     await db.commit()
     
     drift_items = [DriftItem(**item) for item in parsed["drift_detected"]]
+    
+    # ── Phase 1: build & store context bundle (additive, never raises) ────────────
+    # The bundle is persisted alongside the proposal but NOT injected into the
+    # LLM prompt yet (Phase 2).  This preserves existing AI behaviour exactly.
+    try:
+        context_bundle = await context_retrieval_service.build_context_bundle(
+            db=db,
+            target_table=target_table,
+            incoming_columns=list(incoming_schema.keys()),
+        )
+        await context_retrieval_service.store_proposal_context(
+            db=db,
+            proposal_id=file_id,
+            target_table=target_table,
+            bundle=context_bundle,
+        )
+    except Exception:
+        pass  # context bundle failure must never block the ingest response
+    # ───────────────────────────────────────────────────────────────────────────
     
     # 11. Return
     return ProposalResponse(

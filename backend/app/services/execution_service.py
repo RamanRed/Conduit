@@ -7,6 +7,8 @@ from app.schemas import ExecutionResult
 
 # NEW — lineage hook (additive, never raises)
 from app.services import lineage_service
+# NEW — graph auto-linking hook (additive, never raises)
+from app.services import graph_service
 
 
 async def execute_proposal(

@@ -115,9 +115,10 @@ async def find_matching_skills(
     limit: int = 10,
 ) -> List[Skill]:
     """
-    Simple keyword search across skill_name, description, and use_cases.
+    Keyword search across skill_name, description, and use_cases.
     Used by the context retrieval layer to surface relevant skills
-    for an incoming dataset.
+    for an incoming dataset.  Keywords are OR-combined so any match
+    surfaces the skill.
     """
     if not keywords:
         return []
@@ -128,12 +129,100 @@ async def find_matching_skills(
         filters.append(Skill.skill_name.ilike(kw_like))
         filters.append(Skill.description.ilike(kw_like))
         filters.append(Skill.use_cases.ilike(kw_like))
+        filters.append(Skill.category.ilike(kw_like))
 
     stmt = (
         select(Skill)
         .where(or_(*filters))
         .where(Skill.status == "ACTIVE")
+        .order_by(Skill.created_at.desc())
         .limit(limit)
     )
     result = await db.execute(stmt)
     return result.scalars().all()
+
+
+async def update_skill(
+    db: AsyncSession,
+    skill_id: int,
+    status: Optional[str] = None,
+    owner: Optional[str] = None,
+    description: Optional[str] = None,
+    use_cases: Optional[str] = None,
+    constraints: Optional[str] = None,
+) -> Optional[Skill]:
+    """
+    Partially update a skill record.  Only supplied (non-None) fields
+    are written.  Returns the updated Skill, or None if not found.
+    """
+    skill = await get_skill(db, skill_id)
+    if not skill:
+        return None
+
+    if status is not None:
+        valid_statuses = {"ACTIVE", "DEPRECATED", "DRAFT"}
+        if status not in valid_statuses:
+            raise ValueError(f"status must be one of {valid_statuses}")
+        skill.status = status
+
+    if owner is not None:
+        skill.owner = owner
+    if description is not None:
+        skill.description = description
+    if use_cases is not None:
+        skill.use_cases = use_cases
+    if constraints is not None:
+        skill.constraints = constraints
+
+    await db.commit()
+    await db.refresh(skill)
+    return skill
+
+
+async def add_skill_script(
+    db: AsyncSession,
+    skill_id: int,
+    script_path: str,
+    script_hash: Optional[str] = None,
+    is_validated: bool = True,
+) -> Optional[SkillScript]:
+    """
+    Attach a script reference to an existing skill.
+    Returns the new SkillScript record, or None if skill not found.
+    """
+    skill = await get_skill(db, skill_id)
+    if not skill:
+        return None
+    script = SkillScript(
+        skill_id=skill_id,
+        script_path=script_path,
+        script_hash=script_hash,
+        is_validated=is_validated,
+    )
+    db.add(script)
+    await db.commit()
+    await db.refresh(script)
+    return script
+
+
+async def add_skill_issue(
+    db: AsyncSession,
+    skill_id: int,
+    issue_reference: str,
+    resolution_notes: Optional[str] = None,
+) -> Optional[SkillIssueReference]:
+    """
+    Link a historical incident to a skill so the AI can learn from it.
+    """
+    skill = await get_skill(db, skill_id)
+    if not skill:
+        return None
+    ref = SkillIssueReference(
+        skill_id=skill_id,
+        issue_reference=issue_reference,
+        resolution_notes=resolution_notes,
+    )
+    db.add(ref)
+    await db.commit()
+    await db.refresh(ref)
+    return ref

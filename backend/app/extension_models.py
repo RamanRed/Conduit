@@ -114,3 +114,23 @@ class LineageEvent(ExtBase):
     operation_type = Column(String(255), nullable=True)
     skill_used     = Column(String(255), nullable=True)
     executed_at    = Column(DateTime, default=datetime.utcnow)
+
+
+# ─────────────────────────────────────────────
+#  PROPOSAL CONTEXT  (conduit_skills schema)
+#  Stores the context bundle built during ingest
+#  Phase 1 — built and stored, not yet injected.
+# ─────────────────────────────────────────────
+
+class ProposalContext(ExtBase):
+    __tablename__ = "proposal_contexts"
+    __table_args__ = (
+        UniqueConstraint("proposal_id", name="uq_proposal_context_proposal_id"),
+        {"schema": "conduit_skills"},
+    )
+
+    id             = Column(Integer, primary_key=True, autoincrement=True)
+    proposal_id    = Column(String(255), nullable=False)
+    target_table   = Column(String(255), nullable=True)
+    context_bundle = Column(JSONB, nullable=True)   # Full context dict
+    generated_at   = Column(DateTime, default=datetime.utcnow)
