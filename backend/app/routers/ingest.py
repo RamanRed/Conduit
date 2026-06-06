@@ -45,6 +45,10 @@ async def ingest_file(
     # 4. Load sample rows
     try:
         df = pd.read_csv(tmp_path)
+    except pd.errors.EmptyDataError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid CSV file format: EmptyDataError - {str(e)}")
+    except pd.errors.ParserError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid CSV file format: ParserError - {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid CSV file format: {str(e)}")
         
@@ -52,12 +56,62 @@ async def ingest_file(
     
     # 5. Detect incoming schema
     incoming_schema = {col: str(dtype) for col, dtype in df.dtypes.items()}
+    incoming_cols = set(incoming_schema.keys())
     
     # 6. Target schema
     try:
         target_schema = await mcp_service.get_target_schema(target_table, db)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch target schema: {str(e)}")
+        
+    target_cols = {col["column_name"] for col in target_schema.get("columns", [])}
+    
+    if len(incoming_cols.intersection(target_cols)) == 0:
+        drift_detected = [
+            {
+                "column": "ALL_COLUMNS",
+                "issue_type": "SCHEMA_MISMATCH",
+                "source_value": ", ".join(sorted(incoming_cols)),
+                "target_expectation": ", ".join(sorted(target_cols)),
+                "suggested_action": "Reject upload. No matching columns found.",
+                "severity": "CRITICAL"
+            }
+        ]
+        proposed_steps = ["Reject dataset. Zero columns in common with target schema."]
+        generated_code = "def transform(df):\n    # Zero columns in common. No transformation possible.\n    return df"
+        
+        proposal = Proposal(
+            id=file_id,
+            filename=file.filename,
+            gateway_status="CONFLICT",
+            drift_detected=drift_detected,
+            proposed_steps=proposed_steps,
+            generated_code=generated_code,
+            confidence_score=0.0,
+            llm_raw_response="Skipped LLM call: Zero columns in common.",
+            llm_prompt_sent="Skipped LLM call: Zero columns in common.",
+            status="PENDING",
+            file_path=tmp_path,
+            estimated_rows=len(df),
+            pii_columns_found=[],
+            llm_model_used="none"
+        )
+        db.add(proposal)
+        await db.commit()
+        
+        drift_items = [DriftItem(**item) for item in drift_detected]
+        
+        return ProposalResponse(
+            proposal_id=file_id,
+            gateway_status="CONFLICT",
+            drift_detected=drift_items,
+            proposed_steps=proposed_steps,
+            generated_code=generated_code,
+            confidence_score=0.0,
+            pii_columns_found=[],
+            estimated_rows=len(df),
+            llm_model_used="none"
+        )
     
     # Get table metadata
     from app.models import TableMetadata

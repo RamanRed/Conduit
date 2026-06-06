@@ -3,10 +3,19 @@ def classify_gateway_state(
     drift_items: list[dict],
     confidence_score: float
 ) -> str:
-    # Force CONFLICT
-    if confidence_score < 0.70:
+    try:
+        score = float(confidence_score) if confidence_score is not None else 0.0
+    except (ValueError, TypeError):
+        score = 0.0
+
+    # Force CONFLICT for low confidence
+    if score < 0.70:
         return "CONFLICT"
+
+    # Force CONFLICT for critical mismatches
     for item in drift_items:
+        if not isinstance(item, dict):
+            continue
         if item.get("severity") == "HIGH" and item.get("issue_type") == "TYPE_MISMATCH":
             return "CONFLICT"
         if item.get("issue_type") == "MISSING_REQUIRED":
@@ -15,10 +24,17 @@ def classify_gateway_state(
     # Force SCHEMA_EVOLUTION
     if len(drift_items) >= 3:
         return "SCHEMA_EVOLUTION"
-    if 0.70 <= confidence_score <= 0.88:
+    if 0.70 <= score <= 0.88:
         return "SCHEMA_EVOLUTION"
     for item in drift_items:
+        if not isinstance(item, dict):
+            continue
         if item.get("severity") == "MEDIUM":
             return "SCHEMA_EVOLUTION"
 
-    return ai_recommendation
+    # Normalize/validate AI recommendation
+    rec = (ai_recommendation or "").upper()
+    if rec not in ["AUTO_LINK", "SCHEMA_EVOLUTION", "CONFLICT"]:
+        return "CONFLICT" if score <= 0.75 else "SCHEMA_EVOLUTION"
+
+    return rec

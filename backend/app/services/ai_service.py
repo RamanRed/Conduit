@@ -1,4 +1,5 @@
 import json
+import asyncio
 from groq import Groq
 from app.core.config import settings
 import traceback
@@ -37,9 +38,13 @@ Response format:
   "generated_code": "string - complete valid Python function",
   "confidence_score": 0.0-1.0,
   "pii_columns_found": ["col1", "col2"],
-  "reasoning": "string - 2-3 sentences explaining the decisions made",
+  "reasoning": "string - 2-3 sentences explaining in non-technical, business-friendly terms what was transformed and why (WITHOUT any references to internal JSON structure, regex, code syntax, programming languages, database columns, or technical jargon).",
   "gateway_recommendation": "AUTO_LINK|SCHEMA_EVOLUTION|CONFLICT"
 }
+
+Rules for reasoning:
+- Explain decisions in non-technical, business-friendly terms (e.g., "The order_amount column was renamed to amount_usd to match the target schema standard for dollar amounts" or "Customer email values were hashed to protect sensitive data").
+- Do NOT mention code, syntax, regex, data types, database columns, JSON keys/structures, or programming concepts. Focus on what was transformed and why it makes business sense.
 
 Rules for gateway_recommendation:
 - AUTO_LINK: all columns match cleanly, zero or trivial drift 
@@ -118,16 +123,27 @@ Analyze the drift and generate the transformation plan."""
                 "gateway_recommendation": "AUTO_LINK"
             })
     else:
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message}
-            ],
-            temperature=0.1,
-            max_tokens=2000
-        )
-        content = response.choices[0].message.content
+        max_retries = 3
+        delay = 1.0
+        for attempt in range(max_retries + 1):
+            try:
+                response = client.chat.completions.create(
+                    model=MODEL,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message}
+                    ],
+                    temperature=0.1,
+                    max_tokens=2000
+                )
+                content = response.choices[0].message.content
+                break
+            except Exception as e:
+                if attempt < max_retries:
+                    await asyncio.sleep(delay)
+                    delay *= 2
+                else:
+                    raise e
 
     try:
         parsed = json.loads(content)
