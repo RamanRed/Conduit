@@ -6,6 +6,9 @@ from app.database import get_db
 from app.models import Proposal, PipelineSkillsLedger, TableMetadata
 from app.schemas import ProposalResponse, ApproveRequest, RejectRequest, ExecutionResult, DriftItem
 from app.services.execution_service import execute_proposal
+# NEW — context bundle retrieval (additive, read-only)
+from app.services import context_retrieval_service
+from app.extension_schemas import ProposalContextResponse
 
 router = APIRouter()
 
@@ -100,3 +103,41 @@ async def reject_proposal(proposal_id: str, req: RejectRequest, db: AsyncSession
     await db.commit()
     
     return {"status": "rejected"}
+
+
+@router.get("/proposals/{proposal_id}/context", response_model=ProposalContextResponse)
+async def get_proposal_context(
+    proposal_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Return the rich context bundle that was built at ingest time for this proposal.
+
+    Phase 1: the bundle is stored but not injected into the LLM prompt.
+    Phase 2+: the bundle will be used to enrich AI reasoning.
+
+    Returns 404 if the proposal does not exist.
+    Returns 204 (empty body with 200 here for simplicity) if context was never built
+    (e.g. proposals created before Phase 1 was deployed).
+    """
+    # Verify the proposal exists first
+    stmt = select(Proposal).where(Proposal.id == proposal_id)
+    res = await db.execute(stmt)
+    proposal = res.scalars().first()
+    if not proposal:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+
+    ctx = await context_retrieval_service.get_proposal_context(db, proposal_id=proposal_id)
+    if ctx is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No context bundle found for this proposal. "
+                   "Context is built at ingest time; this proposal may pre-date Phase 1.",
+        )
+
+    return ProposalContextResponse(
+        proposal_id=ctx["proposal_id"],
+        target_table=ctx["target_table"],
+        context_bundle=ctx["context_bundle"],
+        generated_at=ctx["generated_at"],
+    )

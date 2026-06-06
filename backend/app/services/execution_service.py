@@ -60,7 +60,7 @@ async def execute_proposal(
     stmt = select(TableMetadata).where(TableMetadata.table_name == "orders_clean")
     res = await db.execute(stmt)
     tbl = res.scalars().first()
-    table_name = "orders_clean" # Hardcoded for demo, could parse from proposal
+    table_name = "orders_clean"  # Hardcoded for demo, could parse from proposal
 
     rows_written = 0
     rows_quarantined = 0
@@ -85,7 +85,6 @@ async def execute_proposal(
                 rows_written += 1
         except Exception as e:
             qr_row = {k: (v.isoformat() if hasattr(v, 'isoformat') else v) for k, v in clean_row.items()}
-            # Failed to insert, write quarantine
             qr = QuarantineRecord(
                 proposal_id=proposal.id,
                 raw_row=qr_row,
@@ -125,17 +124,30 @@ async def execute_proposal(
 
     duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
 
-    # ── NEW: record lineage event (additive, never raises) ──────────
+    # NEW: record lineage event + auto-populate graph (both additive, never raise)
     if rows_written > 0:
+        skill_applied = f"transform_{proposal.filename}"
+        op_type = (
+            "SCHEMA_EVOLUTION"
+            if proposal.gateway_status == "SCHEMA_EVOLUTION"
+            else proposal.gateway_status or "TRANSFORM"
+        )
         await lineage_service.record_event(
             db=db,
             proposal_id=proposal.id,
             source_entity=proposal.filename or "unknown_source",
             target_entity=table_name,
-            operation_type="SCHEMA_EVOLUTION" if proposal.gateway_status == "SCHEMA_EVOLUTION" else proposal.gateway_status or "TRANSFORM",
-            skill_used=f"transform_{proposal.filename}",
+            operation_type=op_type,
+            skill_used=skill_applied,
         )
-    # ───────────────────────────────────────────────────────────────
+        # Auto-populate relationship graph so nodes/edges appear without manual API calls
+        await graph_service.auto_link_execution(
+            db=db,
+            proposal_id=proposal.id,
+            source_filename=proposal.filename or "unknown_source",
+            target_table=table_name,
+            skill_name=skill_applied,
+        )
 
     return ExecutionResult(
         proposal_id=proposal.id,
