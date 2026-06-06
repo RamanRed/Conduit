@@ -9,6 +9,21 @@ from app.database import get_db
 from app.services import validation_service, mcp_service, ai_service, gateway_service
 from app.models import Proposal
 from app.schemas import ProposalResponse, DriftItem
+from typing import Optional
+from pydantic.fields import FieldInfo
+
+# Dynamically add reasoning and reasoning_note to ProposalResponse at import time
+if "reasoning" not in ProposalResponse.model_fields:
+    ProposalResponse.model_fields["reasoning"] = FieldInfo(
+        annotation=Optional[str],
+        default=None
+    )
+if "reasoning_note" not in ProposalResponse.model_fields:
+    ProposalResponse.model_fields["reasoning_note"] = FieldInfo(
+        annotation=Optional[str],
+        default=None
+    )
+ProposalResponse.model_rebuild(force=True)
 
 router = APIRouter()
 
@@ -121,22 +136,19 @@ async def ingest_file(
     tbl = res.scalars().first()
     table_metadata = {"semantic_description": tbl.semantic_description if tbl else ""}
     
-    # 7. AI proposal
+    # 7. AI proposal & 8. Validate code
+    is_retry = False
     try:
         ai_resp = await ai_service.generate_pipeline_proposal(
             incoming_schema, target_schema, sample_rows, table_metadata
         )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"AI Generation Service failed: {str(e)}")
+        parsed = ai_resp["parsed"]
+        generated_code = parsed["generated_code"]
         
-    parsed = ai_resp["parsed"]
-    generated_code = parsed["generated_code"]
-    
-    # 8. Validate code
-    is_valid_code, code_reason = validation_service.validate_generated_code(generated_code)
-    if not is_valid_code:
-        # Retry once
-        try:
+        is_valid_code, code_reason = validation_service.validate_generated_code(generated_code)
+        if not is_valid_code:
+            # Retry once
+            is_retry = True
             ai_resp = await ai_service.generate_pipeline_proposal(
                 incoming_schema, target_schema, sample_rows, table_metadata,
                 retry_msg=f"Code validation failed: {code_reason}. Provide fixed code."
@@ -144,11 +156,69 @@ async def ingest_file(
             parsed = ai_resp["parsed"]
             generated_code = parsed["generated_code"]
             is_valid_code, code_reason = validation_service.validate_generated_code(generated_code)
-        except Exception as e:
-            raise HTTPException(status_code=502, detail=f"AI Retry Service failed: {str(e)}")
+            if not is_valid_code:
+                raise HTTPException(status_code=422, detail={"error": "code validation failed", "detail": code_reason})
+    except Exception as e:
+        from sqlalchemy import select
+        stmt = select(Proposal).where(Proposal.status == "EXECUTED").order_by(Proposal.created_at.desc()).limit(1)
+        res = await db.execute(stmt)
+        cached_proposal = res.scalars().first()
+        
+        if cached_proposal:
+            reasoning_note = "Fallback cache was used due to API timeout/failure."
             
-        if not is_valid_code:
-            raise HTTPException(status_code=422, detail={"error": "code validation failed", "detail": code_reason})
+            raw_resp = json.dumps({
+                "drift_detected": cached_proposal.drift_detected,
+                "proposed_steps": cached_proposal.proposed_steps,
+                "generated_code": cached_proposal.generated_code,
+                "confidence_score": cached_proposal.confidence_score,
+                "pii_columns_found": cached_proposal.pii_columns_found,
+                "reasoning": reasoning_note,
+                "gateway_recommendation": cached_proposal.gateway_status
+            })
+            
+            proposal = Proposal(
+                id=file_id,
+                filename=file.filename,
+                gateway_status=cached_proposal.gateway_status,
+                drift_detected=cached_proposal.drift_detected,
+                proposed_steps=cached_proposal.proposed_steps,
+                generated_code=cached_proposal.generated_code,
+                confidence_score=cached_proposal.confidence_score,
+                llm_raw_response=raw_resp,
+                llm_prompt_sent=f"Fallback cache used. Original exception: {str(e)}",
+                status="PENDING",
+                file_path=tmp_path,
+                estimated_rows=len(df),
+                pii_columns_found=cached_proposal.pii_columns_found,
+                llm_model_used="cached-fallback"
+            )
+            proposal.reasoning = reasoning_note
+            proposal.reasoning_note = reasoning_note
+            
+            db.add(proposal)
+            await db.commit()
+            
+            drift_items = [DriftItem(**item) for item in cached_proposal.drift_detected]
+            
+            return ProposalResponse(
+                proposal_id=file_id,
+                gateway_status=cached_proposal.gateway_status,
+                drift_detected=drift_items,
+                proposed_steps=cached_proposal.proposed_steps,
+                generated_code=cached_proposal.generated_code,
+                confidence_score=cached_proposal.confidence_score,
+                pii_columns_found=cached_proposal.pii_columns_found,
+                estimated_rows=len(df),
+                llm_model_used="cached-fallback",
+                reasoning=reasoning_note,
+                reasoning_note=reasoning_note
+            )
+        else:
+            if isinstance(e, HTTPException):
+                raise e
+            detail_msg = f"AI Retry Service failed: {str(e)}" if is_retry else f"AI Generation Service failed: {str(e)}"
+            raise HTTPException(status_code=502, detail=detail_msg)
             
     # 9. Gateway classification
     gateway_status = gateway_service.classify_gateway_state(
