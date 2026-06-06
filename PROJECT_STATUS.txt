@@ -1,0 +1,259 @@
+================================================================================
+  CONDUIT — PROJECT STATUS CHECKLIST
+  Last Updated: 2026-06-06
+  Owner: Raman (AI & Orchestration) | Aditya (Frontend & Infra)
+================================================================================
+
+
+================================
+  RAMAN'S PART (AI & ORCHESTRATION)
+================================
+
+--- INFRASTRUCTURE ---
+[x] FastAPI project structure (main.py, database.py, config.py)
+[x] SQLAlchemy async engine + session factory
+[x] CORS middleware configured
+[x] Docker Compose (warehouse-db + source-db + api)
+[x] Dockerfile for backend (Python 3.11-slim, libmagic, uvicorn)
+[x] .env.example with all required variables
+[x] Startup event: auto-create conduit schema + tables
+[x] requirements.txt with all dependencies pinned
+
+--- DATABASE MODELS (models.py) ---
+[x] WarehouseUnit model (conduit.warehouse_units)
+[x] SubProject model (conduit.sub_projects)
+[x] TableMetadata model (conduit.tables_metadata)
+[x] AttributeMetadata model (conduit.attributes_metadata)
+[x] PipelineSkillsLedger model (conduit.pipeline_skills_ledger)
+[x] QuarantineRecord model (conduit.quarantine_records)
+[x] Proposal model (conduit.proposals)
+
+--- PYDANTIC SCHEMAS (schemas.py) ---
+[x] DriftItem schema
+[x] ProposalResponse schema
+[x] ApproveRequest schema
+[x] RejectRequest schema
+[x] ExecutionResult schema
+[x] AuditEntry schema
+[x] QuarantineEntry schema
+[x] WarehouseUnitResponse schema
+
+--- MCP SERVICE (services/mcp_service.py) ---
+[x] get_target_schema() — rich metadata from tables_metadata + attributes_metadata
+[x] get_target_schema() — fallback to information_schema.columns
+[x] list_registered_tables() — join TableMetadata -> SubProject -> WarehouseUnit
+[x] get_data_distribution() — row count, null counts, null ratios, distinct counts
+
+--- AI SERVICE (services/ai_service.py) ---
+[x] Groq API integration (llama-3.3-70b-versatile)
+[x] System prompt with strict JSON output format
+[x] User prompt with target schema + incoming schema + sample rows + context
+[x] JSON parse retry logic (auto-retry once on invalid JSON)
+[x] MOCK_AI mode — 3 hardcoded test scenarios:
+    [x] AUTO_LINK mock (clean schema match)
+    [x] SCHEMA_EVOLUTION mock (renames, extra cols, nulls)
+    [x] CONFLICT mock (type mismatch, missing required)
+[x] Response includes: drift_detected, proposed_steps, generated_code,
+    confidence_score, pii_columns_found, reasoning, gateway_recommendation
+
+--- GATEWAY SERVICE (services/gateway_service.py) ---
+[x] classify_gateway_state() with rule-based overrides
+[x] Force CONFLICT: confidence < 0.70
+[x] Force CONFLICT: HIGH severity TYPE_MISMATCH
+[x] Force CONFLICT: any MISSING_REQUIRED
+[x] Force SCHEMA_EVOLUTION: >= 3 drift items
+[x] Force SCHEMA_EVOLUTION: confidence 0.70-0.88
+[x] Force SCHEMA_EVOLUTION: any MEDIUM severity
+[x] Passthrough AI recommendation otherwise
+
+--- VALIDATION SERVICE (services/validation_service.py) ---
+[x] validate_magic_bytes() — MIME type check via python-magic
+[x] Empty file check (0 bytes)
+[x] File size limit (50MB max)
+[x] CSV MIME validation (text/plain, text/csv, application/csv)
+[x] JSON MIME validation (application/json)
+[x] validate_generated_code() — AST parse syntax check
+[x] Function signature check (def transform(df)
+[x] Return statement check
+[x] Unsafe terms blocklist (import os, import sys, subprocess, eval, exec)
+
+--- EXECUTION SERVICE (services/execution_service.py) ---
+[x] Status check (must be PENDING)
+[x] CSV read from saved file path
+[x] Code execution via exec() with sandboxed namespace (pd, hashlib)
+[x] Row-by-row insertion with begin_nested() savepoints
+[x] Failed rows -> quarantine_records
+[x] PipelineSkillsLedger entry on success/failure/rollback
+[x] ExecutionResult response with rows_written, rows_quarantined, duration_ms
+
+--- API ROUTERS ---
+[x] POST /api/ingest — file upload + AI proposal generation
+[x] GET  /api/proposals/{id} — fetch proposal details
+[x] POST /api/proposals/{id}/approve — approve + execute
+[x] POST /api/proposals/{id}/reject — reject with reason
+[x] GET  /api/audit — list all audit entries (with pagination)
+[x] GET  /api/audit/{id} — single audit entry detail
+[x] GET  /api/quarantine — list all quarantined rows
+[x] GET  /api/quarantine/{proposal_id} — quarantine by proposal
+[x] GET  /api/sources — list warehouse units with connectivity status
+
+--- SEED DATA (db/) ---
+[x] seed_warehouse.sql — schema + warehouse unit + sub_project + table + attributes
+[x] public.orders_clean target table creation
+[x] Demo CSV: clean_orders.csv (AUTO_LINK scenario)
+[x] Demo CSV: drifted_orders.csv (SCHEMA_EVOLUTION scenario)
+[x] Demo CSV: conflicted_orders.csv (CONFLICT scenario)
+
+
+================================================================================
+  KNOWN BUGS (TO FIX)
+================================================================================
+
+[x] BUG-001: CRITICAL — Duplicate row insertion in execution_service.py
+    Lines 62-83 do a first pass (buggy, with empty except:pass), then
+    lines 90-115 do a second pass. Every row gets inserted twice or errors
+    silently. FIX: Remove the first pass entirely.
+
+[x] BUG-002: CRITICAL — Audit-to-proposal join via code string matching
+    audit.py joins PipelineSkillsLedger to Proposal via
+    transformation_script_ref == generated_code. This is unreliable.
+    FIX: Add proposal_id FK to PipelineSkillsLedger model.
+
+[x] BUG-003: CRITICAL — No proposal_id on PipelineSkillsLedger
+    Makes audit -> proposal linking fragile. Must add proposal_id column.
+
+[x] BUG-004: MEDIUM — GET /proposals/{id} re-reads CSV from /tmp
+    proposals.py line 21 does pd.read_csv(proposal.file_path) just to get
+    row count. If /tmp is cleaned, this crashes.
+    FIX: Store estimated_rows on Proposal model.
+
+[x] BUG-005: MEDIUM — pii_columns_found always [] on GET proposal
+    proposals.py line 30 hardcodes empty list.
+    FIX: Store pii_columns_found on Proposal model.
+
+[x] BUG-006: LOW — Wrong LLM version string hardcoded
+    execution_service.py line 122 says "llama-3.1-70b-versatile" but actual
+    model is "llama-3.3-70b-versatile". Also hardcoded in proposals.py.
+    FIX: Store llm_model_used on Proposal model and reference it.
+
+[x] BUG-007: LOW — SQL injection risk in mcp_service.py
+    get_data_distribution() uses f-strings for table_name and column_name
+    in SQL queries (lines 73-88).
+    FIX: Use parameterized queries or at least whitelist table names.
+
+[x] BUG-008: MEDIUM — No error handling around AI call in ingest
+    If Groq API fails, pandas fails, or file save fails, raw 500 error.
+    FIX: Add try/except with proper HTTPException responses.
+
+[x] BUG-009: LOW — Mock AI generated_code has "import hashlib" inside
+    function body. System prompt says "Import nothing inside the function"
+    but mock code contradicts this. Not caught by validation since hashlib
+    isn't in the blocklist, but inconsistent.
+
+
+================================================================================
+  PENDING WORK (RAMAN)
+================================================================================
+
+--- Day 1 Fixes (Priority: CRITICAL) ---
+[x] Fix execution_service.py — remove duplicate insertion block
+[x] Add proposal_id to PipelineSkillsLedger model
+[x] Fix audit.py — use proposal_id FK for joins
+[x] Add estimated_rows, pii_columns_found, llm_model_used to Proposal model
+[x] Fix proposals.py — use stored fields instead of re-reading CSV
+[x] Fix ingest.py — store new fields on proposal
+[x] Add error handling wrappers on ingest route
+[x] Fix LLM version string references
+
+--- Day 2 Enhancements ---
+[x] Tighten LLM prompts — make AI reasoning readable for non-technical judges
+[x] Add confidence score display logic improvements
+[x] Handle edge cases: empty CSV, completely incompatible schema, API timeout
+[x] Add retry logic with backoff for Groq API calls
+[x] Improve mock AI to not use "import hashlib" inside function body
+
+--- Day 3 Integration & Polish ---
+[ ] Test full demo scenario end-to-end on live deployment
+[ ] Fix integration bugs found during testing
+[ ] Production Docker Compose (env vars, no hardcoded secrets)
+[ ] Parameterize SQL queries in mcp_service.py (SQL injection fix)
+[ ] Add request/response logging middleware for debugging
+
+--- Day 4 Deliverables ---
+[ ] Final bug fixes on live deployment
+[ ] Tighten Claude/Groq prompts for clear "why" in audit log
+[ ] Handle Groq API timeout gracefully (fallback to cached proposal)
+[ ] README.md — AI tools used section, architecture diagram
+[ ] Rehearse demo walkthrough
+
+
+================================
+  ADITYA'S PART (FRONTEND & INFRA)
+================================
+
+--- IMPLEMENTED ---
+[x] Next.js 14 project setup (App Router, TypeScript, TailwindCSS)
+[x] API proxy configuration (Next.js rewrites /api/* -> localhost:8000)
+[x] Custom design system (Tailwind config with semantic colors)
+[x] Global CSS component layer (card, panel, btn, table, badge, input)
+[x] Sidebar navigation component
+[x] PageHeader / SectionHeader components
+[x] Badge components (GatewayBadge, SeverityBadge, ExecutionBadge, StatusDot)
+[x] CodeBlock component (macOS-style code viewer)
+[x] CopyButton component
+[x] API client (lib/api.ts) — 9 fetch functions with error handling
+[x] Type definitions (lib/types.ts) — 8 interfaces, 4 type aliases
+[x] Format utilities (lib/format.ts) — date, relative time, bytes formatters
+
+--- PAGES ---
+[x] / — Dashboard (stats cards, recent executions, sources status)
+[x] /ingest — File upload + inline ProposalReview
+[x] /proposals — Proposals list (uses audit entries as proxy)
+[x] /proposals/[id] — Proposal detail with tabs + approve/reject
+[x] /audit — Audit ledger with status filters
+[x] /audit/[id] — Audit detail with tabs (overview/script/prompt/response)
+[x] /quarantine — Master-detail quarantine viewer
+[x] /sources — Warehouse sources with connectivity status
+
+--- KNOWN FRONTEND ISSUES ---
+[ ] Brute-force audit lookup in proposals/[id] (loops IDs 1-50) — fragile
+[ ] No dedicated /proposals list API — uses audit entries as proxy
+[ ] ProposalStatus type defined but never used
+[ ] getQuarantineForProposal() defined but never called
+[ ] All pages client-rendered ("use client") — no SSR/SSG
+[ ] No authentication — human_approver_id is just a text input
+[ ] No pagination UI — audit page fetches 200 entries in one shot
+[ ] No global error boundary
+[ ] No retry logic on API calls
+[ ] No toast/notification system
+
+--- PENDING FRONTEND ---
+[ ] Fix proposals page to use a dedicated proposals list endpoint
+[ ] Add loading states, error toasts, empty states
+[ ] Add lineage view page (D3.js force-directed graph)
+[ ] Production deployment (Railway)
+
+
+================================================================================
+  OUT OF SCOPE (Post-Hackathon)
+================================================================================
+
+[ ] Local LLM for cheap routing
+[ ] Neo4j / Amazon Neptune knowledge graph
+[ ] Multiple MCP servers
+[ ] Full AWS VPC / PrivateLink setup
+[ ] Safe Update Engine (schema mutation simulation)
+[ ] Real authentication system
+[ ] WebSocket/SSE for real-time updates
+[ ] Server-side rendering optimization
+
+
+================================================================================
+  NOTES
+================================================================================
+
+- Working branch: dev
+- LLM: Groq API with llama-3.3-70b-versatile (PRD said Claude, changed for cost)
+- MOCK_AI=True for development without API key
+- Docker Compose runs: warehouse-db (:5432) + source-db (:5433) + api (:8000)
+- Frontend runs: Next.js (:3000) with proxy to backend
