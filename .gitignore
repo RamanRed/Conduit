@@ -2,8 +2,12 @@ __pycache__/
 *.pyc
 *.pyo
 .env
+.env.local
 backend/.env
 backend/app/__pycache__/
 backend/app/**/__pycache__/
 *.log
 .DS_Store
+node_modules/
+.next/
+out/
