@@ -9,8 +9,17 @@ from typing import List
 router = APIRouter()
 
 @router.get("/quarantine", response_model=List[QuarantineEntry])
-async def get_quarantine(db: AsyncSession = Depends(get_db)):
-    stmt = select(QuarantineRecord).order_by(QuarantineRecord.quarantined_at.desc())
+async def get_quarantine(
+    limit: int = 100,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = (
+        select(QuarantineRecord)
+        .order_by(QuarantineRecord.quarantined_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
     res = await db.execute(stmt)
     records = res.scalars().all()
     return [QuarantineEntry(
@@ -22,8 +31,19 @@ async def get_quarantine(db: AsyncSession = Depends(get_db)):
     ) for r in records]
 
 @router.get("/quarantine/{proposal_id}", response_model=List[QuarantineEntry])
-async def get_quarantine_by_proposal(proposal_id: str, db: AsyncSession = Depends(get_db)):
-    stmt = select(QuarantineRecord).where(QuarantineRecord.proposal_id == proposal_id).order_by(QuarantineRecord.quarantined_at.desc())
+async def get_quarantine_by_proposal(
+    proposal_id: str,
+    limit: int = 100,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = (
+        select(QuarantineRecord)
+        .where(QuarantineRecord.proposal_id == proposal_id)
+        .order_by(QuarantineRecord.quarantined_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
     res = await db.execute(stmt)
     records = res.scalars().all()
     return [QuarantineEntry(

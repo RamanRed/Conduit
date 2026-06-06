@@ -7,7 +7,7 @@ import json
 
 from app.database import get_db
 from app.services import validation_service, mcp_service, ai_service, gateway_service
-from app.services import context_retrieval_service  # Phase 1 — build & store context bundle
+from app.services import context_retrieval_service  # Phase 1 & 2 — build & store context bundle
 from app.models import Proposal
 from app.schemas import ProposalResponse, DriftItem
 from typing import Optional
@@ -96,6 +96,7 @@ async def ingest_file(
         proposed_steps = ["Reject dataset. Zero columns in common with target schema."]
         generated_code = "def transform(df):\n    # Zero columns in common. No transformation possible.\n    return df"
         
+        # STAGE 2: include target_table in the proposal
         proposal = Proposal(
             id=file_id,
             filename=file.filename,
@@ -108,6 +109,7 @@ async def ingest_file(
             llm_prompt_sent="Skipped LLM call: Zero columns in common.",
             status="PENDING",
             file_path=tmp_path,
+            target_table=target_table,
             estimated_rows=len(df),
             pii_columns_found=[],
             llm_model_used="none"
@@ -117,9 +119,11 @@ async def ingest_file(
         
         drift_items = [DriftItem(**item) for item in drift_detected]
         
+        # STAGE 4: No context bundle for zero-overlap fast path (no point)
         return ProposalResponse(
             proposal_id=file_id,
             gateway_status="CONFLICT",
+            target_table=target_table,
             drift_detected=drift_items,
             proposed_steps=proposed_steps,
             generated_code=generated_code,
@@ -136,12 +140,26 @@ async def ingest_file(
     res = await db.execute(stmt)
     tbl = res.scalars().first()
     table_metadata = {"semantic_description": tbl.semantic_description if tbl else ""}
+
+    # ── STAGE 4: Build context bundle BEFORE AI call (Phase 2 reorder) ────────
+    context_bundle = None
+    try:
+        context_bundle = await context_retrieval_service.build_context_bundle(
+            db=db,
+            target_table=target_table,
+            incoming_columns=list(incoming_schema.keys()),
+        )
+    except Exception:
+        pass  # context bundle failure must never block ingest
+    # ──────────────────────────────────────────────────────────────────────────
     
     # 7. AI proposal & 8. Validate code
     is_retry = False
     try:
+        # STAGE 3/4: Pass context_bundle to AI service
         ai_resp = await ai_service.generate_pipeline_proposal(
-            incoming_schema, target_schema, sample_rows, table_metadata
+            incoming_schema, target_schema, sample_rows, table_metadata,
+            context_bundle=context_bundle,
         )
         parsed = ai_resp["parsed"]
         generated_code = parsed["generated_code"]
@@ -152,6 +170,7 @@ async def ingest_file(
             is_retry = True
             ai_resp = await ai_service.generate_pipeline_proposal(
                 incoming_schema, target_schema, sample_rows, table_metadata,
+                context_bundle=context_bundle,
                 retry_msg=f"Code validation failed: {code_reason}. Provide fixed code."
             )
             parsed = ai_resp["parsed"]
@@ -178,6 +197,7 @@ async def ingest_file(
                 "gateway_recommendation": cached_proposal.gateway_status
             })
             
+            # STAGE 2: include target_table in the fallback proposal
             proposal = Proposal(
                 id=file_id,
                 filename=file.filename,
@@ -190,6 +210,7 @@ async def ingest_file(
                 llm_prompt_sent=f"Fallback cache used. Original exception: {str(e)}",
                 status="PENDING",
                 file_path=tmp_path,
+                target_table=target_table,
                 estimated_rows=len(df),
                 pii_columns_found=cached_proposal.pii_columns_found,
                 llm_model_used="cached-fallback"
@@ -205,6 +226,7 @@ async def ingest_file(
             return ProposalResponse(
                 proposal_id=file_id,
                 gateway_status=cached_proposal.gateway_status,
+                target_table=target_table,
                 drift_detected=drift_items,
                 proposed_steps=cached_proposal.proposed_steps,
                 generated_code=cached_proposal.generated_code,
@@ -228,7 +250,7 @@ async def ingest_file(
         parsed["confidence_score"]
     )
     
-    # 10. Save proposal
+    # 10. Save proposal (STAGE 2: includes target_table)
     proposal = Proposal(
         id=file_id,
         filename=file.filename,
@@ -241,6 +263,7 @@ async def ingest_file(
         llm_prompt_sent=ai_resp["prompt_sent"],
         status="PENDING",
         file_path=tmp_path,
+        target_table=target_table,
         estimated_rows=len(df),
         pii_columns_found=parsed["pii_columns_found"],
         llm_model_used=ai_resp["model_used"]
@@ -250,29 +273,25 @@ async def ingest_file(
     
     drift_items = [DriftItem(**item) for item in parsed["drift_detected"]]
     
-    # ── Phase 1: build & store context bundle (additive, never raises) ────────────
-    # The bundle is persisted alongside the proposal but NOT injected into the
-    # LLM prompt yet (Phase 2).  This preserves existing AI behaviour exactly.
+    # ── STAGE 4: Store context bundle AFTER proposal save ──────────────────
+    # (for GET /proposals/{id}/context endpoint)
     try:
-        context_bundle = await context_retrieval_service.build_context_bundle(
-            db=db,
-            target_table=target_table,
-            incoming_columns=list(incoming_schema.keys()),
-        )
-        await context_retrieval_service.store_proposal_context(
-            db=db,
-            proposal_id=file_id,
-            target_table=target_table,
-            bundle=context_bundle,
-        )
+        if context_bundle:
+            await context_retrieval_service.store_proposal_context(
+                db=db,
+                proposal_id=file_id,
+                target_table=target_table,
+                bundle=context_bundle,
+            )
     except Exception:
-        pass  # context bundle failure must never block the ingest response
-    # ───────────────────────────────────────────────────────────────────────────
+        pass  # context bundle storage failure must never block ingest
+    # ───────────────────────────────────────────────────────────────────────
     
-    # 11. Return
+    # 11. Return (STAGE 7: includes target_table)
     return ProposalResponse(
         proposal_id=file_id,
         gateway_status=gateway_status,
+        target_table=target_table,
         drift_detected=drift_items,
         proposed_steps=parsed["proposed_steps"],
         generated_code=generated_code,

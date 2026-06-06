@@ -6,6 +6,14 @@ Extension models for Conduit:
 
 These models are purely additive.  Nothing in this file touches or
 imports anything from models.py or any existing router/service.
+
+STAGE 1 FIX: Added UniqueConstraint to GraphNode (node_type, entity_id)
+             and GraphEdge (source_node_id, target_node_id, relation_type).
+             Without these, ON CONFLICT DO NOTHING in seed SQL does nothing
+             useful and get_or_create_* can produce duplicates across restarts.
+
+STAGE 1 FIX: Added UniqueConstraint to SkillIssueReference (skill_id, issue_reference)
+             so re-running seed SQL is idempotent.
 """
 from sqlalchemy import (
     Column, Integer, String, Boolean, Float, Text,
@@ -43,7 +51,10 @@ class Skill(ExtBase):
 
 class SkillScript(ExtBase):
     __tablename__ = "skill_scripts"
-    __table_args__ = {"schema": "conduit_skills"}
+    __table_args__ = (
+        UniqueConstraint("skill_id", "script_path", name="uq_skill_script"),
+        {"schema": "conduit_skills"},
+    )
 
     id           = Column(Integer, primary_key=True, autoincrement=True)
     skill_id     = Column(Integer, ForeignKey("conduit_skills.skills.id", ondelete="CASCADE"))
@@ -64,7 +75,11 @@ class SkillExample(ExtBase):
 
 class SkillIssueReference(ExtBase):
     __tablename__ = "skill_issue_references"
-    __table_args__ = {"schema": "conduit_skills"}
+    __table_args__ = (
+        # Prevents the same incident being linked twice to the same skill
+        UniqueConstraint("skill_id", "issue_reference", name="uq_skill_issue_ref"),
+        {"schema": "conduit_skills"},
+    )
 
     id               = Column(Integer, primary_key=True, autoincrement=True)
     skill_id         = Column(Integer, ForeignKey("conduit_skills.skills.id", ondelete="CASCADE"))
@@ -78,25 +93,40 @@ class SkillIssueReference(ExtBase):
 
 class GraphNode(ExtBase):
     __tablename__ = "graph_nodes"
-    __table_args__ = {"schema": "conduit_graph"}
+    __table_args__ = (
+        # STAGE 1 FIX: Unique constraint enables ON CONFLICT and prevents duplicate
+        # nodes for the same (type, entity_id) pair across container restarts or
+        # multiple ingest runs.
+        UniqueConstraint("node_type", "entity_id", name="uq_graph_node_type_entity"),
+        {"schema": "conduit_graph"},
+    )
 
-    id          = Column(Integer, primary_key=True, autoincrement=True)
-    node_type   = Column(String(50),  nullable=True)   # TABLE, SKILL, KPI, PROJECT…
-    entity_id   = Column(String(255), nullable=True)
-    entity_name = Column(String(255), nullable=True)
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    node_type     = Column(String(50),  nullable=True)   # TABLE, SKILL, KPI, PROJECT…
+    entity_id     = Column(String(255), nullable=True)
+    entity_name   = Column(String(255), nullable=True)
     node_metadata = Column("metadata", JSONB, nullable=True)
 
 
 class GraphEdge(ExtBase):
     __tablename__ = "graph_edges"
-    __table_args__ = {"schema": "conduit_graph"}
+    __table_args__ = (
+        # STAGE 1 FIX: Prevents duplicate edges of the same type between the same
+        # node pair.  get_or_create_edge and ON CONFLICT in seed SQL both rely on
+        # this constraint being present.
+        UniqueConstraint(
+            "source_node_id", "target_node_id", "relation_type",
+            name="uq_graph_edge",
+        ),
+        {"schema": "conduit_graph"},
+    )
 
-    id             = Column(Integer, primary_key=True, autoincrement=True)
-    source_node_id = Column(Integer, ForeignKey("conduit_graph.graph_nodes.id", ondelete="CASCADE"))
-    target_node_id = Column(Integer, ForeignKey("conduit_graph.graph_nodes.id", ondelete="CASCADE"))
-    relation_type  = Column(String(100), nullable=True)  # BELONGS_TO, DEPENDS_ON, USES_SKILL…
+    id               = Column(Integer, primary_key=True, autoincrement=True)
+    source_node_id   = Column(Integer, ForeignKey("conduit_graph.graph_nodes.id", ondelete="CASCADE"))
+    target_node_id   = Column(Integer, ForeignKey("conduit_graph.graph_nodes.id", ondelete="CASCADE"))
+    relation_type    = Column(String(100), nullable=True)
     confidence_score = Column(Float, default=1.0)
-    created_at     = Column(DateTime, default=datetime.utcnow)
+    created_at       = Column(DateTime, default=datetime.utcnow)
 
 
 # ─────────────────────────────────────────────
@@ -118,8 +148,9 @@ class LineageEvent(ExtBase):
 
 # ─────────────────────────────────────────────
 #  PROPOSAL CONTEXT  (conduit_skills schema)
-#  Stores the context bundle built during ingest
+#  Stores the context bundle built during ingest.
 #  Phase 1 — built and stored, not yet injected.
+#  Phase 2 — bundle will be injected into AI prompt.
 # ─────────────────────────────────────────────
 
 class ProposalContext(ExtBase):
@@ -132,5 +163,5 @@ class ProposalContext(ExtBase):
     id             = Column(Integer, primary_key=True, autoincrement=True)
     proposal_id    = Column(String(255), nullable=False)
     target_table   = Column(String(255), nullable=True)
-    context_bundle = Column(JSONB, nullable=True)   # Full context dict
+    context_bundle = Column(JSONB, nullable=True)
     generated_at   = Column(DateTime, default=datetime.utcnow)

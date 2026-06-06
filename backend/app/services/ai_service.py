@@ -3,6 +3,7 @@ import asyncio
 from groq import Groq
 from app.core.config import settings
 import traceback
+from typing import Optional
 
 client = Groq(api_key=settings.GROQ_API_KEY)
 MODEL = "llama-3.3-70b-versatile"
@@ -12,6 +13,7 @@ async def generate_pipeline_proposal(
     target_schema: dict,
     sample_rows: list[dict],
     table_metadata: dict,
+    context_bundle: Optional[dict] = None,   # STAGE 3: Phase 2 context injection
     retry_msg: str = None
 ) -> dict:
 
@@ -62,6 +64,35 @@ Rules for generated_code:
 - Must add processed_at column: pd.Timestamp.now()
 - Return the transformed DataFrame"""
 
+    # ── STAGE 3: Build organizational context section for Phase 2 ──────────
+    context_section = ""
+    if context_bundle:
+        related_skills = context_bundle.get("related_skills", [])
+        related_entities = context_bundle.get("related_entities", [])
+        dependencies = context_bundle.get("dependencies", [])
+        business_context = context_bundle.get("business_context", [])
+        pii_columns_from_graph = context_bundle.get("pii_columns", [])
+
+        skills_block = ""
+        for sk in related_skills:
+            skills_block += f"\n  - {sk['name']} ({sk['category']}): {sk['description']}"
+
+        context_section = f"""
+
+ORGANIZATIONAL KNOWLEDGE CONTEXT:
+Known PII columns in this table (from graph): {', '.join(pii_columns_from_graph) if pii_columns_from_graph else 'none detected'}
+Related entities: {', '.join(e['name'] for e in related_entities) if related_entities else 'none'}
+Dependencies (tables this table reads from): {', '.join(d['name'] for d in dependencies) if dependencies else 'none'}
+Business KPI impact: {'; '.join(business_context) if business_context else 'not specified'}
+Registered skills that may apply:{skills_block if skills_block else ' none'}
+
+When generating the transformation:
+- Prefer strategies consistent with the registered skills above
+- Always mask the PII columns listed above, even if they appear safe
+- Be aware this table feeds the business KPIs listed above — schema changes have downstream impact
+"""
+    # ── End context section ───────────────────────────────────────────────
+
     user_message = f"""TARGET TABLE SCHEMA:
 {json.dumps(target_schema, indent=2)}
 
@@ -73,7 +104,7 @@ SAMPLE ROWS (first 5):
 
 TABLE BUSINESS CONTEXT:
 {json.dumps(table_metadata, indent=2)}
-
+{context_section}
 Analyze the drift and generate the transformation plan."""
 
     if retry_msg:
@@ -95,7 +126,8 @@ Analyze the drift and generate the transformation plan."""
                 "confidence_score": 0.85,
                 "pii_columns_found": ["customer_email"],
                 "reasoning": "Mocked logic",
-                "gateway_recommendation": "SCHEMA_EVOLUTION"
+                "gateway_recommendation": "SCHEMA_EVOLUTION",
+                "context_aware": context_bundle is not None,
             })
         elif "amount_usd" in cols and "customer_email" not in cols:
             # CONFLICT mock
@@ -109,7 +141,8 @@ Analyze the drift and generate the transformation plan."""
                 "confidence_score": 0.60,
                 "pii_columns_found": [],
                 "reasoning": "Mocked logic",
-                "gateway_recommendation": "CONFLICT"
+                "gateway_recommendation": "CONFLICT",
+                "context_aware": context_bundle is not None,
             })
         else:
             # AUTO_LINK mock
@@ -120,7 +153,8 @@ Analyze the drift and generate the transformation plan."""
                 "confidence_score": 0.95,
                 "pii_columns_found": ["customer_email"],
                 "reasoning": "Mocked logic",
-                "gateway_recommendation": "AUTO_LINK"
+                "gateway_recommendation": "AUTO_LINK",
+                "context_aware": context_bundle is not None,
             })
     else:
         max_retries = 3
@@ -156,7 +190,8 @@ Analyze the drift and generate the transformation plan."""
     except json.JSONDecodeError:
         if retry_msg is None:
             return await generate_pipeline_proposal(
-                incoming_schema, target_schema, sample_rows, table_metadata, 
+                incoming_schema, target_schema, sample_rows, table_metadata,
+                context_bundle=context_bundle,
                 retry_msg="Your previous response was not valid JSON. Respond with ONLY the JSON object, no other text."
             )
         else:

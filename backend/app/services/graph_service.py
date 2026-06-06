@@ -14,6 +14,7 @@ Changes vs original draft:
 from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_
+from sqlalchemy.exc import IntegrityError
 from app.extension_models import GraphNode, GraphEdge
 
 
@@ -51,6 +52,10 @@ async def get_or_create_node(
     """
     Return an existing node matching (node_type, entity_id),
     or create a new one.  Idempotent — safe to call multiple times.
+
+    STAGE 5 FIX: IntegrityError catch for race-condition safety.
+    Two concurrent requests may both pass the SELECT check; the DB
+    unique constraint catches the duplicate INSERT, and we re-query.
     """
     result = await db.execute(
         select(GraphNode).where(
@@ -61,7 +66,17 @@ async def get_or_create_node(
     existing = result.scalars().first()
     if existing:
         return existing
-    return await create_node(db, node_type, entity_id, entity_name, metadata)
+    try:
+        return await create_node(db, node_type, entity_id, entity_name, metadata)
+    except IntegrityError:
+        await db.rollback()
+        result = await db.execute(
+            select(GraphNode).where(
+                GraphNode.node_type == node_type,
+                GraphNode.entity_id == entity_id,
+            )
+        )
+        return result.scalars().first()
 
 
 async def create_edge(
@@ -94,6 +109,8 @@ async def get_or_create_edge(
     """
     Return an existing edge matching (source, target, relation_type),
     or create it.  Prevents duplicate edges in auto-linking scenarios.
+
+    STAGE 5 FIX: IntegrityError catch mirrors get_or_create_node().
     """
     result = await db.execute(
         select(GraphEdge).where(
@@ -105,7 +122,18 @@ async def get_or_create_edge(
     existing = result.scalars().first()
     if existing:
         return existing
-    return await create_edge(db, source_node_id, target_node_id, relation_type, confidence_score)
+    try:
+        return await create_edge(db, source_node_id, target_node_id, relation_type, confidence_score)
+    except IntegrityError:
+        await db.rollback()
+        result = await db.execute(
+            select(GraphEdge).where(
+                GraphEdge.source_node_id == source_node_id,
+                GraphEdge.target_node_id == target_node_id,
+                GraphEdge.relation_type == relation_type,
+            )
+        )
+        return result.scalars().first()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

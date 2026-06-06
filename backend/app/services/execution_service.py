@@ -40,7 +40,8 @@ async def execute_proposal(
         transformed_df = transform_fn(df)
     except Exception as e:
         proposal.status = "FAILED"
-        stmt = select(TableMetadata).where(TableMetadata.table_name == "orders_clean")
+        table_name = proposal.target_table or "orders_clean"
+        stmt = select(TableMetadata).where(TableMetadata.table_name == table_name)
         res = await db.execute(stmt)
         tbl = res.scalars().first()
         ledger_entry = PipelineSkillsLedger(
@@ -57,10 +58,11 @@ async def execute_proposal(
         raise e
 
     # Insert into database
-    stmt = select(TableMetadata).where(TableMetadata.table_name == "orders_clean")
+    # STAGE 2 FIX: use proposal.target_table instead of hardcoded "orders_clean"
+    table_name = proposal.target_table or "orders_clean"
+    stmt = select(TableMetadata).where(TableMetadata.table_name == table_name)
     res = await db.execute(stmt)
     tbl = res.scalars().first()
-    table_name = "orders_clean"  # Hardcoded for demo, could parse from proposal
 
     rows_written = 0
     rows_quarantined = 0

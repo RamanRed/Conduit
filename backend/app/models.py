@@ -90,6 +90,7 @@ class Proposal(Base):
     approved_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     file_path = Column(String)
+    target_table = Column(String, nullable=True)
     estimated_rows = Column(Integer, nullable=True)
     pii_columns_found = Column(JSON, nullable=True)
     llm_model_used = Column(String, nullable=True)

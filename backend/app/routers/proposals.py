@@ -33,6 +33,7 @@ async def list_proposals(
             ProposalResponse(
                 proposal_id=p.id,
                 gateway_status=p.gateway_status,
+                target_table=p.target_table,
                 drift_detected=drift_items,
                 proposed_steps=p.proposed_steps or [],
                 generated_code=p.generated_code or "",
@@ -57,6 +58,7 @@ async def get_proposal(proposal_id: str, db: AsyncSession = Depends(get_db)):
     return ProposalResponse(
         proposal_id=proposal.id,
         gateway_status=proposal.gateway_status,
+        target_table=proposal.target_table,
         drift_detected=drift_items,
         proposed_steps=proposal.proposed_steps,
         generated_code=proposal.generated_code,
@@ -86,7 +88,9 @@ async def reject_proposal(proposal_id: str, req: RejectRequest, db: AsyncSession
         
     proposal.status = "REJECTED"
     
-    stmt = select(TableMetadata).where(TableMetadata.table_name == "orders_clean") # Using mocked table_name for simplicity
+    # STAGE 2/7 FIX: use proposal.target_table instead of hardcoded string
+    table_name = proposal.target_table or "orders_clean"
+    stmt = select(TableMetadata).where(TableMetadata.table_name == table_name)
     res = await db.execute(stmt)
     tbl = res.scalars().first()
     

@@ -13,6 +13,7 @@ class DriftItem(BaseModel):
 class ProposalResponse(BaseModel):
     proposal_id: str
     gateway_status: str
+    target_table: Optional[str] = None
     drift_detected: List[DriftItem]
     proposed_steps: List[str]
     generated_code: str
@@ -20,6 +21,9 @@ class ProposalResponse(BaseModel):
     pii_columns_found: List[str]
     estimated_rows: int
     llm_model_used: str
+    # Phase 1 additions — AI reasoning in plain English
+    reasoning: Optional[str] = None
+    reasoning_note: Optional[str] = None
 
 class ApproveRequest(BaseModel):
     human_approver_id: str
