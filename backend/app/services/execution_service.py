@@ -5,6 +5,10 @@ from datetime import datetime
 from app.models import Proposal, PipelineSkillsLedger, QuarantineRecord, TableMetadata
 from app.schemas import ExecutionResult
 
+# NEW — lineage hook (additive, never raises)
+from app.services import lineage_service
+
+
 async def execute_proposal(
     proposal: Proposal,
     approver_id: str,
@@ -118,6 +122,18 @@ async def execute_proposal(
         raise e
 
     duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+
+    # ── NEW: record lineage event (additive, never raises) ──────────
+    if rows_written > 0:
+        await lineage_service.record_event(
+            db=db,
+            proposal_id=proposal.id,
+            source_entity=proposal.filename or "unknown_source",
+            target_entity=table_name,
+            operation_type="SCHEMA_EVOLUTION" if proposal.gateway_status == "SCHEMA_EVOLUTION" else proposal.gateway_status or "TRANSFORM",
+            skill_used=f"transform_{proposal.filename}",
+        )
+    # ───────────────────────────────────────────────────────────────
 
     return ExecutionResult(
         proposal_id=proposal.id,
