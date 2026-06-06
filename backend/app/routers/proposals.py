@@ -1,12 +1,45 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from typing import List, Optional
 from app.database import get_db
 from app.models import Proposal, PipelineSkillsLedger, TableMetadata
 from app.schemas import ProposalResponse, ApproveRequest, RejectRequest, ExecutionResult, DriftItem
 from app.services.execution_service import execute_proposal
 
 router = APIRouter()
+
+@router.get("/proposals", response_model=List[ProposalResponse])
+async def list_proposals(
+    limit: int = 50,
+    offset: int = 0,
+    status: Optional[str] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    stmt = select(Proposal)
+    if status is not None:
+        stmt = stmt.where(Proposal.status == status)
+    stmt = stmt.order_by(Proposal.created_at.desc()).offset(offset).limit(limit)
+    res = await db.execute(stmt)
+    proposals = res.scalars().all()
+    
+    results = []
+    for p in proposals:
+        drift_items = [DriftItem(**item) for item in p.drift_detected] if p.drift_detected else []
+        results.append(
+            ProposalResponse(
+                proposal_id=p.id,
+                gateway_status=p.gateway_status,
+                drift_detected=drift_items,
+                proposed_steps=p.proposed_steps or [],
+                generated_code=p.generated_code or "",
+                confidence_score=p.confidence_score or 0.0,
+                pii_columns_found=p.pii_columns_found or [],
+                estimated_rows=p.estimated_rows or 0,
+                llm_model_used=p.llm_model_used or "llama-3.3-70b-versatile"
+            )
+        )
+    return results
 
 @router.get("/proposals/{proposal_id}", response_model=ProposalResponse)
 async def get_proposal(proposal_id: str, db: AsyncSession = Depends(get_db)):
