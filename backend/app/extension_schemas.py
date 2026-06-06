@@ -84,7 +84,7 @@ class SkillResponse(BaseModel):
     constraints: Optional[str] = None
     owner: Optional[str] = None
     status: str
-    created_at: datetime
+    created_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -123,7 +123,7 @@ class GraphEdgeResponse(BaseModel):
     target_node_id: int
     relation_type: Optional[str] = None
     confidence_score: float
-    created_at: datetime
+    created_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

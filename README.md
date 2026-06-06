@@ -33,6 +33,31 @@ Conduit/
 └── README.md
 ```
 
+## System Architecture
+
+The following flowchart illustrates the Conduit ingest, validation, and execution pipeline:
+
+```mermaid
+flowchart TD
+    A[User File Upload] --> B[FastAPI Router]
+    B --> C{Non-LLM Gatekeeper Checks<br>Magic Bytes, File Size}
+    C -->|Invalid/Too Large| D[Reject Upload & Return Error]
+    C -->|Valid| E[Schema Introspection via MCP<br>Tables & Attributes Metadata]
+    E --> KB[Build Context Bundle<br>Knowledge Graph BFS + Skill Registry Search]
+    KB --> F{AI Proposal Generation<br>Groq Llama 3.3 70B + Context Injection}
+    F -->|Success| G[AST Safety Guard<br>AST Syntax Parse & Blocklist Validation]
+    F -->|Fail / Rate-Limit| H[Resilience Fallback<br>Read Most Recent Cached Executed Proposal from DB]
+    G -->|Valid Syntax & Import Safe| I[Rule-Based Gateway Classification<br>AUTO_LINK, SCHEMA_EVOLUTION, CONFLICT]
+    G -->|Invalid / Blocked Import| J[Mark Conflict / Reject Proposal]
+    H --> I
+    I --> K{Human Approval}
+    K -->|Approved| L[Execute with Savepoint Isolation]
+    K -->|Rejected| M[Proposal Rejected]
+    L --> N[Quarantine Anomalous Rows & Update Audit Log]
+    L --> LE[Record Lineage Event]
+    L --> GL[Auto-populate Graph nodes/edges]
+```
+
 ## Quick Start
 
 ### 1. Backend (FastAPI)
@@ -78,6 +103,14 @@ Test the system with these files (in `db/demo_csvs/`):
 | `GET` | `/api/audit/{id}` | Full audit details for one execution |
 | `GET` | `/api/quarantine` | List quarantined rows |
 | `GET` | `/api/sources` | List registered data sources |
+| `GET` | `/api/skills` | List registered skills (category/status filters, paginated) |
+| `GET` | `/api/skills/{id}` | Skill details (includes scripts, examples, issues) |
+| `POST` | `/api/skills` | Register a new transformation skill |
+| `GET` | `/api/graph/nodes` | List all nodes in the relationship graph |
+| `GET` | `/api/graph/edges` | List all edges in the relationship graph |
+| `GET` | `/api/graph/lineage/{entity}` | BFS lineage traversal starting from an entity |
+| `GET` | `/api/lineage` | List all data lineage events (paginated) |
+| `GET` | `/api/lineage/{proposal_id}` | Lineage events associated with a specific proposal |
 
 ## Classification States
 
@@ -88,6 +121,14 @@ Every proposal is classified into one of three states:
 - **CONFLICT** — Type mismatches, missing required columns, or low confidence
 
 The backend enforces rule-based overrides on top of AI recommendations.
+
+## AI Tools & Structured Compilation
+
+Conduit utilizes state-of-the-art LLMs combined with rigorous deterministic guardrails to ensure robust schema resolution and code safety:
+
+- **Model**: Powered by the Groq API utilizing `llama-3.3-70b-versatile`. This model offers high-speed, low-latency, and highly structured JSON outputs specifying detailed mappings and Pandas transformations.
+- **AST Safety Guard**: Any AI-generated transformation code is validated prior to execution. Using `ast.parse` checks Python syntax validity before rendering; imports blocklist is enforced, preventing any imports or execution of potentially dangerous libraries or builtins (e.g. blocking `os`, `sys`, `subprocess`, `eval`).
+- **Fail-safe Fallback Cache**: A resilience layer intercepts API errors, timeouts, or rate limits. If the Groq LLM is unreachable, the system attempts to fetch the most recent successfully executed proposal from the database for the matching source/target schema, serving it as a fallback proposal.
 
 ## Frontend Pages
 
@@ -101,3 +142,22 @@ The backend enforces rule-based overrides on top of AI recommendations.
 | `/audit/[id]` | Full audit detail with executed script, AI prompt, and raw response |
 | `/quarantine` | Split-view of quarantined rows with raw data and failure reason |
 | `/sources` | Registered data warehouse units and connectivity status |
+
+## Verification and Local Testing
+
+You can run isolated end-to-end integration and sanity checks on the ingestion, classification, approval, and audit endpoints using the `uv` environment. 
+
+Ensure the backend server is running locally (e.g., via `docker compose up -d` or running FastAPI manually on port 8000), then execute:
+
+```bash
+uv run --with requests python Conduit/run_checks.py
+```
+
+This runs the automated checks defined in `run_checks.py`, which:
+1. Simulates ingestion of clean data (`clean_orders.csv`), expecting automatic resolution (`AUTO_LINK`).
+2. Simulates ingestion of drifted data (`drifted_orders.csv`), expecting a proposed fix (`SCHEMA_EVOLUTION`).
+3. Simulates ingestion of conflicted data (`conflicted_orders.csv`), expecting mismatch detection (`CONFLICT`).
+4. Approves the automatic resolution proposal to execute the database ingestion.
+5. Verifies database auditing by querying execution logs.
+6. Tests the database connectivity and registration source endpoints.
+

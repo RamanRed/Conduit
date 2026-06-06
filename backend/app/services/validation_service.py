@@ -8,12 +8,15 @@ def validate_magic_bytes(file_bytes: bytes, declared_extension: str) -> tuple[bo
         return False, "File is too large (max 50MB)"
         
     detected = magic.from_buffer(file_bytes, mime=True)
-    if declared_extension.lower() == '.csv':
+    ext = declared_extension.lower()
+    if ext == '.csv':
         if detected not in ['text/plain', 'text/csv', 'application/csv']:
             return False, f"Expected CSV, detected {detected}"
-    elif declared_extension.lower() == '.json':
+    elif ext == '.json':
         if detected != 'application/json':
             return False, f"Expected JSON, detected {detected}"
+    else:
+        return False, f"Unsupported file extension: {declared_extension}"
             
     return True, ""
 
