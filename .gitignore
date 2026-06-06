@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+backend/.env
+backend/app/__pycache__/
+backend/app/**/__pycache__/
+*.log
+.DS_Store

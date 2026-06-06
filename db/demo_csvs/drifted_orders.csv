@@ -1,0 +1,6 @@
+order_id,customer_id,order_amount,order_status,customer_email,created_at,discount_code
+1001,501,49.99,,alice@example.com,2024-06-01 09:00:00,SUMMER20
+1002,502,129.00,pending,bob@example.com,2024-06-01 09:15:00,
+1003,503,15.50,,charlie@example.com,2024-06-01 09:30:00,WELCOME
+1004,504,89.99,cancelled,diana@example.com,2024-06-01 09:45:00,
+1005,505,200.00,,eve@example.com,2024-06-01 10:00:00,

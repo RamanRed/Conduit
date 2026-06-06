@@ -1,0 +1,44 @@
+version: "3.8"
+services:
+  warehouse-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: warehousedb
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./db/seed_warehouse.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d warehousedb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  source-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: sourcedb
+    ports:
+      - "5433:5432"
+
+  api:
+    build:
+      context: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - WAREHOUSE_DB_URL=postgresql+asyncpg://user:password@warehouse-db:5432/warehousedb
+      - SOURCE_DB_URL=postgresql+asyncpg://user:password@source-db:5432/sourcedb
+      - GROQ_API_KEY=REPLACE_WITH_YOUR_GROQ_API_KEY
+      - MOCK_AI=False
+      - ENVIRONMENT=development
+    volumes:
+      - ./backend:/app
+      - /tmp:/tmp
+    depends_on:
+      warehouse-db:
+        condition: service_healthy
