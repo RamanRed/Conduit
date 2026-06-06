@@ -56,6 +56,7 @@ class PipelineSkillsLedger(Base):
     __table_args__ = {"schema": "conduit"}
     id = Column(Integer, primary_key=True, autoincrement=True)
     table_id = Column(Integer, ForeignKey("conduit.tables_metadata.id", ondelete="CASCADE"))
+    proposal_id = Column(String, ForeignKey("conduit.proposals.id", ondelete="CASCADE"), nullable=True)
     skill_name = Column(String)
     applied_by_llm_version = Column(String, nullable=True)
     transformation_script_ref = Column(String)
@@ -89,3 +90,6 @@ class Proposal(Base):
     approved_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     file_path = Column(String)
+    estimated_rows = Column(Integer, nullable=True)
+    pii_columns_found = Column(JSON, nullable=True)
+    llm_model_used = Column(String, nullable=True)

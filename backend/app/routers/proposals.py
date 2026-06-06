@@ -17,8 +17,6 @@ async def get_proposal(proposal_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Proposal not found")
         
     drift_items = [DriftItem(**item) for item in proposal.drift_detected]
-    import pandas as pd
-    df = pd.read_csv(proposal.file_path)
     
     return ProposalResponse(
         proposal_id=proposal.id,
@@ -27,9 +25,9 @@ async def get_proposal(proposal_id: str, db: AsyncSession = Depends(get_db)):
         proposed_steps=proposal.proposed_steps,
         generated_code=proposal.generated_code,
         confidence_score=proposal.confidence_score,
-        pii_columns_found=[], # Could extract from steps/code, mock for now
-        estimated_rows=len(df),
-        llm_model_used="llama-3.1-70b-versatile"
+        pii_columns_found=proposal.pii_columns_found or [],
+        estimated_rows=proposal.estimated_rows or 0,
+        llm_model_used=proposal.llm_model_used or "llama-3.3-70b-versatile"
     )
 
 @router.post("/proposals/{proposal_id}/approve", response_model=ExecutionResult)
@@ -58,6 +56,7 @@ async def reject_proposal(proposal_id: str, req: RejectRequest, db: AsyncSession
     
     ledger_entry = PipelineSkillsLedger(
         table_id=tbl.id if tbl else None,
+        proposal_id=proposal.id,
         skill_name="rejected_by_engineer",
         applied_by_llm_version=None,
         transformation_script_ref=req.reason,

@@ -69,17 +69,25 @@ async def list_registered_tables(db: AsyncSession) -> list[dict]:
     return out
 
 async def get_data_distribution(table_name: str, db: AsyncSession) -> dict:
+    import re
+    if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$", table_name):
+        raise ValueError("Invalid table name")
+
     try:
         count_query = text(f"SELECT COUNT(*) FROM {table_name}")
         res = await db.execute(count_query)
         row_count = res.scalar()
 
         col_query = text(f"SELECT column_name FROM information_schema.columns WHERE table_name = :table_name")
-        res_cols = await db.execute(col_query, {"table_name": table_name})
+        simple_table_name = table_name.split(".")[-1] if "." in table_name else table_name
+        res_cols = await db.execute(col_query, {"table_name": simple_table_name})
         cols = [r[0] for r in res_cols.fetchall()]
 
         columns = []
         for c in cols:
+            if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", c):
+                continue
+
             null_query = text(f"SELECT COUNT(*) - COUNT({c}) as nulls FROM {table_name}")
             res_null = await db.execute(null_query)
             null_count = res_null.scalar()

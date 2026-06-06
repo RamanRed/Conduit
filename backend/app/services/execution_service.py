@@ -39,8 +39,9 @@ async def execute_proposal(
         tbl = res.scalars().first()
         ledger_entry = PipelineSkillsLedger(
             table_id=tbl.id if tbl else None,
+            proposal_id=proposal.id,
             skill_name=f"transform_{proposal.filename}",
-            applied_by_llm_version=proposal.llm_raw_response[:10],
+            applied_by_llm_version=proposal.llm_model_used or "llama-3.3-70b-versatile",
             transformation_script_ref=proposal.generated_code,
             human_approver_id=approver_id,
             execution_status="FAILED"
@@ -63,33 +64,6 @@ async def execute_proposal(
     placeholders = ", ".join([f":{c}" for c in cols])
     insert_sql = text(f"INSERT INTO {table_name} ({', '.join(cols)}) VALUES ({placeholders})")
 
-    try:
-        # Start logical batch insert, fallback to row by row for quarantine
-        for row in transformed_df.to_dict('records'):
-            try:
-                # Need to convert na to None
-                clean_row = {k: (None if pd.isna(v) else v) for k, v in row.items()}
-                await db.execute(insert_sql, clean_row)
-                rows_written += 1
-            except Exception as row_error:
-                # rollback the savepoint for this row conceptually, asyncpg doesn't do subtrans auto
-                # Actually, if an error happens we might need a savepoint, but here we'll assume row by row or handle error
-                # Since we don't have savepoints explicitly set up easily here for each row, 
-                # we'll just insert into quarantine. Note: in real sqlalchemy we should use nested()
-                pass # let's implement proper savepoints
-        
-        # We need nested transaction for per row fallback
-    except Exception:
-        pass
-
-    # A better approach: row-by-row with savepoint
-    # SQLAlchemy async doesn't support savepoint in the same way sometimes, let's use a standard nested transaction if possible
-    
-    # Actually just simple row by row:
-    # We will iterate row by row in individual nested transactions
-    rows_written = 0
-    rows_quarantined = 0
-    
     for row in transformed_df.to_dict('records'):
         clean_row = {}
         for k, v in row.items():
@@ -118,8 +92,9 @@ async def execute_proposal(
         ledger_status = "SUCCESS" if rows_written > 0 else "FAILED"
         ledger_entry = PipelineSkillsLedger(
             table_id=tbl.id if tbl else None,
+            proposal_id=proposal.id,
             skill_name=f"transform_{proposal.filename}",
-            applied_by_llm_version="llama-3.1-70b-versatile",
+            applied_by_llm_version=proposal.llm_model_used or "llama-3.3-70b-versatile",
             transformation_script_ref=proposal.generated_code,
             human_approver_id=approver_id,
             execution_status=ledger_status
@@ -132,8 +107,9 @@ async def execute_proposal(
         proposal.status = "FAILED"
         db.add(PipelineSkillsLedger(
             table_id=tbl.id if tbl else None,
+            proposal_id=proposal.id,
             skill_name=f"transform_{proposal.filename}",
-            applied_by_llm_version="llama-3.1-70b-versatile",
+            applied_by_llm_version=proposal.llm_model_used or "llama-3.3-70b-versatile",
             transformation_script_ref=proposal.generated_code,
             human_approver_id=approver_id,
             execution_status="ROLLEDBACK"

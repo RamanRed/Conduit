@@ -86,7 +86,7 @@ Analyze the drift and generate the transformation plan."""
                     {"column": "order_status", "issue_type": "NULL_VIOLATION", "source_value": "null", "target_expectation": "not null", "suggested_action": "fill nulls", "severity": "LOW"}
                 ],
                 "proposed_steps": ["Rename order_amount", "Drop discount_code", "Fill order_status"],
-                "generated_code": 'def transform(df: pd.DataFrame) -> pd.DataFrame:\n    df = df.rename(columns={"order_amount": "amount_usd"})\n    if "discount_code" in df.columns:\n        df = df.drop(columns=["discount_code"])\n    df["order_status"] = df["order_status"].fillna("unknown")\n    import hashlib\n    df["customer_email"] = df["customer_email"].apply(lambda x: hashlib.sha256(str(x).encode()).hexdigest() if pd.notnull(x) else x)\n    df["processed_at"] = pd.Timestamp.now()\n    df["created_at"] = pd.to_datetime(df["created_at"])\n    return df',
+                "generated_code": 'def transform(df: pd.DataFrame) -> pd.DataFrame:\n    df = df.rename(columns={"order_amount": "amount_usd"})\n    if "discount_code" in df.columns:\n        df = df.drop(columns=["discount_code"])\n    df["order_status"] = df["order_status"].fillna("unknown")\n    df["customer_email"] = df["customer_email"].apply(lambda x: hashlib.sha256(str(x).encode()).hexdigest() if pd.notnull(x) else x)\n    df["processed_at"] = pd.Timestamp.now()\n    df["created_at"] = pd.to_datetime(df["created_at"])\n    return df',
                 "confidence_score": 0.85,
                 "pii_columns_found": ["customer_email"],
                 "reasoning": "Mocked logic",
@@ -111,7 +111,7 @@ Analyze the drift and generate the transformation plan."""
             content = json.dumps({
                 "drift_detected": [],
                 "proposed_steps": ["Identity transform"],
-                "generated_code": 'def transform(df: pd.DataFrame) -> pd.DataFrame:\n    import hashlib\n    df["customer_email"] = df["customer_email"].apply(lambda x: hashlib.sha256(str(x).encode()).hexdigest() if pd.notnull(x) else x)\n    df["processed_at"] = pd.Timestamp.now()\n    df["created_at"] = pd.to_datetime(df["created_at"])\n    return df',
+                "generated_code": 'def transform(df: pd.DataFrame) -> pd.DataFrame:\n    df["customer_email"] = df["customer_email"].apply(lambda x: hashlib.sha256(str(x).encode()).hexdigest() if pd.notnull(x) else x)\n    df["processed_at"] = pd.Timestamp.now()\n    df["created_at"] = pd.to_datetime(df["created_at"])\n    return df',
                 "confidence_score": 0.95,
                 "pii_columns_found": ["customer_email"],
                 "reasoning": "Mocked logic",

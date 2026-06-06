@@ -30,19 +30,34 @@ async def ingest_file(
         
     # 3. Save file
     file_id = str(uuid.uuid4())
+    import os
+    try:
+        os.makedirs("/tmp", exist_ok=True)
+    except Exception:
+        pass  # ignore if directory creation fails or not applicable
     tmp_path = f"/tmp/{file_id}_{file.filename}"
-    async with aiofiles.open(tmp_path, 'wb') as f:
-        await f.write(file_bytes)
+    try:
+        async with aiofiles.open(tmp_path, 'wb') as f:
+            await f.write(file_bytes)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save uploaded file: {str(e)}")
         
     # 4. Load sample rows
-    df = pd.read_csv(tmp_path)
+    try:
+        df = pd.read_csv(tmp_path)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid CSV file format: {str(e)}")
+        
     sample_rows = df.head(5).to_dict(orient="records")
     
     # 5. Detect incoming schema
     incoming_schema = {col: str(dtype) for col, dtype in df.dtypes.items()}
     
     # 6. Target schema
-    target_schema = await mcp_service.get_target_schema(target_table, db)
+    try:
+        target_schema = await mcp_service.get_target_schema(target_table, db)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch target schema: {str(e)}")
     
     # Get table metadata
     from app.models import TableMetadata
@@ -53,9 +68,13 @@ async def ingest_file(
     table_metadata = {"semantic_description": tbl.semantic_description if tbl else ""}
     
     # 7. AI proposal
-    ai_resp = await ai_service.generate_pipeline_proposal(
-        incoming_schema, target_schema, sample_rows, table_metadata
-    )
+    try:
+        ai_resp = await ai_service.generate_pipeline_proposal(
+            incoming_schema, target_schema, sample_rows, table_metadata
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"AI Generation Service failed: {str(e)}")
+        
     parsed = ai_resp["parsed"]
     generated_code = parsed["generated_code"]
     
@@ -63,13 +82,17 @@ async def ingest_file(
     is_valid_code, code_reason = validation_service.validate_generated_code(generated_code)
     if not is_valid_code:
         # Retry once
-        ai_resp = await ai_service.generate_pipeline_proposal(
-            incoming_schema, target_schema, sample_rows, table_metadata,
-            retry_msg=f"Code validation failed: {code_reason}. Provide fixed code."
-        )
-        parsed = ai_resp["parsed"]
-        generated_code = parsed["generated_code"]
-        is_valid_code, code_reason = validation_service.validate_generated_code(generated_code)
+        try:
+            ai_resp = await ai_service.generate_pipeline_proposal(
+                incoming_schema, target_schema, sample_rows, table_metadata,
+                retry_msg=f"Code validation failed: {code_reason}. Provide fixed code."
+            )
+            parsed = ai_resp["parsed"]
+            generated_code = parsed["generated_code"]
+            is_valid_code, code_reason = validation_service.validate_generated_code(generated_code)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"AI Retry Service failed: {str(e)}")
+            
         if not is_valid_code:
             raise HTTPException(status_code=422, detail={"error": "code validation failed", "detail": code_reason})
             
@@ -92,7 +115,10 @@ async def ingest_file(
         llm_raw_response=ai_resp["raw_response"],
         llm_prompt_sent=ai_resp["prompt_sent"],
         status="PENDING",
-        file_path=tmp_path
+        file_path=tmp_path,
+        estimated_rows=len(df),
+        pii_columns_found=parsed["pii_columns_found"],
+        llm_model_used=ai_resp["model_used"]
     )
     db.add(proposal)
     await db.commit()
