@@ -8,74 +8,76 @@ Conduit is an autonomous agentic data engineering framework that detects schema 
 Conduit/
 ├── backend/                  # FastAPI backend (Python)
 │   ├── app/
-│   │   ├── main.py           # FastAPI entrypoint
-│   │   ├── database.py       # Async SQLAlchemy engine
-│   │   ├── models.py         # ORM models (conduit schema)
-│   │   ├── schemas.py        # Pydantic request/response models
-│   │   ├── routers/          # API endpoints
-│   │   │   ├── ingest.py
-│   │   │   ├── proposals.py
-│   │   │   ├── audit.py
-│   │   │   ├── quarantine.py
-│   │   │   └── sources.py
-│   │   ├── services/         # Business logic
-│   │   │   ├── mcp_service.py        # Schema introspection
-│   │   │   ├── ai_service.py         # Groq AI integration
-│   │   │   ├── gateway_service.py    # Classification rules
-│   │   │   ├── execution_service.py  # Safe exec + insert
-│   │   │   └── validation_service.py # File + code validation
-│   │   └── core/
-│   │       └── config.py
+│   │   ├── main.py
+│   │   ├── database.py
+│   │   ├── models.py
+│   │   ├── schemas.py
+│   │   ├── routers/          # /ingest, /proposals, /audit, /quarantine, /sources
+│   │   ├── services/         # mcp, ai, gateway, execution, validation
+│   │   └── core/config.py
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   └── .env.example
+├── frontend/                 # Next.js frontend (TypeScript)
+│   ├── src/
+│   │   ├── app/              # App router pages
+│   │   ├── components/       # Shared UI components
+│   │   └── lib/              # API client, types, formatters
+│   ├── tailwind.config.js
+│   ├── tsconfig.json
+│   └── package.json
 ├── db/
 │   ├── seed_warehouse.sql    # Auto-loaded on Postgres init
 │   └── demo_csvs/            # Test files
-│       ├── clean_orders.csv
-│       ├── drifted_orders.csv
-│       └── conflicted_orders.csv
 ├── docker-compose.yml        # Spins up Postgres + API
-├── run_checks.py             # End-to-end verification script
 └── README.md
 ```
 
 ## Quick Start
 
-1. Copy environment template:
-   ```bash
-   cp backend/.env.example backend/.env
-   ```
-   - Add your `GROQ_API_KEY` from [console.groq.com](https://console.groq.com)
-   - Set `MOCK_AI=False` to use real AI, or `True` for local mock testing
+### 1. Backend (FastAPI)
 
-2. Start all services (run from the `Conduit/` directory):
-   ```bash
-   cd Conduit
-   docker compose up -d
-   ```
+```bash
+cd Conduit
+cp backend/.env.example backend/.env
+# Edit .env to add GROQ_API_KEY
+docker compose up -d
+```
 
-3. Access the API:
-   - API: `http://localhost:8000`
-   - Interactive docs: `http://localhost:8000/docs`
+The API will be available at `http://localhost:8000`.
 
-4. Run the verification suite (optional):
-   ```bash
-   python run_checks.py
-   ```
+### 2. Frontend (Next.js)
+
+```bash
+cd Conduit/frontend
+npm install
+npm run dev
+```
+
+The UI will be available at `http://localhost:3000`.
+
+The frontend proxies `/api/*` requests to the backend, so no extra config is needed.
+
+## Demo Data
+
+Test the system with these files (in `db/demo_csvs/`):
+
+- `clean_orders.csv` — clean schema, expected to land in `AUTO_LINK`
+- `drifted_orders.csv` — has renames, extra columns, and nulls → `SCHEMA_EVOLUTION`
+- `conflicted_orders.csv` — type mismatches and missing required columns → `CONFLICT`
 
 ## API Endpoints
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/api/ingest` | POST | Upload file + generate AI proposal |
-| `/api/proposals/{id}` | GET | Retrieve proposal details |
-| `/api/proposals/{id}/approve` | POST | Execute approved transformation |
-| `/api/proposals/{id}/reject` | POST | Reject a proposal |
-| `/api/audit` | GET | List execution history |
-| `/api/audit/{id}` | GET | Full audit details for one execution |
-| `/api/quarantine` | GET | List quarantined rows |
-| `/api/sources` | GET | List registered data sources |
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| `POST` | `/api/ingest` | Upload file + generate AI proposal |
+| `GET` | `/api/proposals/{id}` | Retrieve proposal details |
+| `POST` | `/api/proposals/{id}/approve` | Execute approved transformation |
+| `POST` | `/api/proposals/{id}/reject` | Reject a proposal |
+| `GET` | `/api/audit` | List execution history |
+| `GET` | `/api/audit/{id}` | Full audit details for one execution |
+| `GET` | `/api/quarantine` | List quarantined rows |
+| `GET` | `/api/sources` | List registered data sources |
 
 ## Classification States
 
@@ -87,24 +89,15 @@ Every proposal is classified into one of three states:
 
 The backend enforces rule-based overrides on top of AI recommendations.
 
-## Environment Variables
+## Frontend Pages
 
-```env
-GROQ_API_KEY=gsk_...
-WAREHOUSE_DB_URL=postgresql+asyncpg://user:password@warehouse-db:5432/warehousedb
-SOURCE_DB_URL=postgresql+asyncpg://user:password@source-db:5432/sourcedb
-MOCK_AI=False
-ENVIRONMENT=development
-```
-
-## Database Schema
-
-The `conduit` schema contains:
-
-- `warehouse_units` — Physical data sources
-- `sub_projects` — Logical groupings
-- `tables_metadata` — Registered target tables
-- `attributes_metadata` — Column-level metadata
-- `pipeline_skills_ledger` — Audit log
-- `quarantine_records` — Failed rows
-- `proposals` — AI-generated transformation plans
+| Route | Purpose |
+|-------|---------|
+| `/` | Overview dashboard with stats, recent executions, and source status |
+| `/ingest` | File upload + inline proposal review with confidence scoring |
+| `/proposals` | All proposals in a table view |
+| `/proposals/[id]` | Detailed proposal review with drift/code/prompt tabs and approve/reject actions |
+| `/audit` | Audit ledger with status filters |
+| `/audit/[id]` | Full audit detail with executed script, AI prompt, and raw response |
+| `/quarantine` | Split-view of quarantined rows with raw data and failure reason |
+| `/sources` | Registered data warehouse units and connectivity status |

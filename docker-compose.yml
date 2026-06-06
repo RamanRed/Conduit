@@ -33,12 +33,15 @@ services:
     environment:
       - WAREHOUSE_DB_URL=postgresql+asyncpg://user:password@warehouse-db:5432/warehousedb
       - SOURCE_DB_URL=postgresql+asyncpg://user:password@source-db:5432/sourcedb
-      - GROQ_API_KEY=REPLACE_WITH_YOUR_GROQ_API_KEY
+      - GROQ_API_KEY=GROQ_API_KEY_PLACEHOLDER
       - MOCK_AI=False
       - ENVIRONMENT=development
     volumes:
       - ./backend:/app
-      - /tmp:/tmp
+      - tmp_data:/tmp
     depends_on:
       warehouse-db:
         condition: service_healthy
+
+volumes:
+  tmp_data:
