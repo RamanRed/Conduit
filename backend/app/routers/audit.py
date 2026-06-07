@@ -11,7 +11,7 @@ router = APIRouter()
 @router.get("/audit", response_model=List[AuditEntry])
 async def get_audit(limit: int = 50, offset: int = 0, db: AsyncSession = Depends(get_db)):
     # Simple join, we will fetch ledger and then proposal for missing fields (filename, llm_prompt)
-    stmt = select(PipelineSkillsLedger, Proposal).join(Proposal, PipelineSkillsLedger.transformation_script_ref == Proposal.generated_code, isouter=True).order_by(PipelineSkillsLedger.executed_at.desc()).limit(limit).offset(offset)
+    stmt = select(PipelineSkillsLedger, Proposal).join(Proposal, PipelineSkillsLedger.proposal_id == Proposal.id, isouter=True).order_by(PipelineSkillsLedger.executed_at.desc()).limit(limit).offset(offset)
     res = await db.execute(stmt)
     rows = res.all()
     
@@ -39,7 +39,7 @@ async def get_audit_entry(entry_id: int, db: AsyncSession = Depends(get_db)):
     if not ledger:
         raise HTTPException(status_code=404, detail="Entry not found")
         
-    stmt_p = select(Proposal).where(Proposal.generated_code == ledger.transformation_script_ref)
+    stmt_p = select(Proposal).where(Proposal.id == ledger.proposal_id)
     res_p = await db.execute(stmt_p)
     proposal = res_p.scalars().first()
     

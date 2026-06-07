@@ -1,0 +1,257 @@
+================================================================================
+  CONDUIT — PROJECT STATUS CHECKLIST
+  Last Updated: 2026-06-07
+  Owner: Raman (AI & Orchestration) | Aditya (Frontend & Infra)
+================================================================================
+
+
+================================
+  RAMAN'S PART (AI & ORCHESTRATION)
+================================
+
+--- INFRASTRUCTURE ---
+[x] FastAPI project structure (main.py, database.py, config.py)
+[x] SQLAlchemy async engine + session factory
+[x] CORS middleware configured
+[x] Docker Compose (warehouse-db + source-db + api)
+[x] Dockerfile for backend (Python 3.11-slim, libmagic, uvicorn)
+[x] .env.example with all required variables
+[x] Startup event: auto-create conduit schema + tables
+[x] requirements.txt with all dependencies pinned
+[x] Startup event: auto-create conduit_skills, conduit_graph, conduit_lineage schemas  [NEW]
+
+--- DATABASE MODELS (models.py) ---
+[x] WarehouseUnit model (conduit.warehouse_units)
+[x] SubProject model (conduit.sub_projects)
+[x] TableMetadata model (conduit.tables_metadata)
+[x] AttributeMetadata model (conduit.attributes_metadata)
+[x] PipelineSkillsLedger model (conduit.pipeline_skills_ledger)
+[x] QuarantineRecord model (conduit.quarantine_records)
+[x] Proposal model (conduit.proposals)
+
+--- EXTENSION MODELS (extension_models.py) ---                                [NEW]
+[x] Skill model (conduit_skills.skills)
+[x] SkillScript model (conduit_skills.skill_scripts)
+[x] SkillExample model (conduit_skills.skill_examples)
+[x] SkillIssueReference model (conduit_skills.skill_issue_references)
+[x] GraphNode model (conduit_graph.graph_nodes)
+[x] GraphEdge model (conduit_graph.graph_edges)
+[x] LineageEvent model (conduit_lineage.lineage_events)
+
+--- PYDANTIC SCHEMAS (schemas.py) ---
+[x] DriftItem schema
+[x] ProposalResponse schema
+[x] ApproveRequest schema
+[x] RejectRequest schema
+[x] ExecutionResult schema
+[x] AuditEntry schema
+[x] QuarantineEntry schema
+[x] WarehouseUnitResponse schema
+
+--- EXTENSION PYDANTIC SCHEMAS (extension_schemas.py) ---                     [NEW]
+[x] SkillResponse schema
+[x] SkillDetailResponse schema (includes scripts, examples, issue_references)
+[x] CreateSkillRequest schema
+[x] GraphNodeResponse schema
+[x] GraphEdgeResponse schema
+[x] LineageGraphResponse schema
+[x] LineageEventResponse schema
+
+--- MCP SERVICE (services/mcp_service.py) ---
+[x] get_target_schema() — rich metadata from tables_metadata + attributes_metadata
+[x] get_target_schema() — fallback to information_schema.columns
+[x] list_registered_tables() — join TableMetadata -> SubProject -> WarehouseUnit
+[x] get_data_distribution() — row count, null counts, null ratios, distinct counts
+
+--- AI SERVICE (services/ai_service.py) ---
+[x] Groq API integration (llama-3.3-70b-versatile)
+[x] System prompt with strict JSON output format
+[x] User prompt with target schema + incoming schema + sample rows + context
+[x] JSON parse retry logic (auto-retry once on invalid JSON)
+[x] MOCK_AI mode — 3 hardcoded test scenarios:
+    [x] AUTO_LINK mock (clean schema match)
+    [x] SCHEMA_EVOLUTION mock (renames, extra cols, nulls)
+    [x] CONFLICT mock (type mismatch, missing required)
+[x] Response includes: drift_detected, proposed_steps, generated_code,
+    confidence_score, pii_columns_found, reasoning, gateway_recommendation
+
+--- GATEWAY SERVICE (services/gateway_service.py) ---
+[x] classify_gateway_state() with rule-based overrides
+[x] Force CONFLICT: confidence < 0.70
+[x] Force CONFLICT: HIGH severity TYPE_MISMATCH
+[x] Force CONFLICT: any MISSING_REQUIRED
+[x] Force SCHEMA_EVOLUTION: >= 3 drift items
+[x] Force SCHEMA_EVOLUTION: confidence 0.70-0.88
+[x] Force SCHEMA_EVOLUTION: any MEDIUM severity
+[x] Passthrough AI recommendation otherwise
+
+--- VALIDATION SERVICE (services/validation_service.py) ---
+[x] validate_magic_bytes() — MIME type check via python-magic
+[x] Empty file check (0 bytes)
+[x] File size limit (50MB max)
+[x] CSV MIME validation (text/plain, text/csv, application/csv)
+[x] JSON MIME validation (application/json)
+[x] validate_generated_code() — AST parse syntax check
+[x] Function signature check (def transform(df)
+[x] Return statement check
+[x] Unsafe terms blocklist (import os, import sys, subprocess, eval, exec)
+
+--- EXECUTION SERVICE (services/execution_service.py) ---
+[x] Status check (must be PENDING)
+[x] CSV read from saved file path
+[x] Code execution via exec() with sandboxed namespace (pd, hashlib)
+[x] Row-by-row insertion with begin_nested() savepoints
+[x] Failed rows -> quarantine_records
+[x] PipelineSkillsLedger entry on success/failure/rollback
+[x] ExecutionResult response with rows_written, rows_quarantined, duration_ms
+[x] lineage_service.record_event() hook after successful execution         [NEW]
+    — additive only, wrapped in try/except, never breaks execution flow
+
+--- SKILL REGISTRY SERVICE (services/skill_registry_service.py) ---           [NEW]
+[x] register_skill() — create skill + child examples/issue_refs in one call
+[x] get_skill() — fetch single skill by id
+[x] get_skill_with_children() — skill + scripts + examples + issue_references
+[x] list_skills() — paginated list with category/status filters
+[x] find_matching_skills() — keyword search across name/description/use_cases
+
+--- GRAPH SERVICE (services/graph_service.py) ---                              [NEW]
+[x] create_node() — insert a graph node
+[x] get_or_create_node() — idempotent node creation
+[x] create_edge() — directed edge between two nodes
+[x] get_all_nodes() — paginated list with optional node_type filter
+[x] get_all_edges() — paginated list with optional relation_type filter
+[x] get_neighbors() — one-hop traversal in/out/both directions
+[x] get_lineage() — BFS traversal up to max_depth hops
+[x] get_dependencies() — direct DEPENDS_ON edges for a node
+
+--- LINEAGE SERVICE (services/lineage_service.py) ---                          [NEW]
+[x] record_event() — append lineage record, swallows errors safely
+[x] list_events() — paginated, most recent first
+[x] get_events_for_proposal() — all events for a proposal in order
+
+--- CONTEXT RETRIEVAL SERVICE (services/context_retrieval_service.py) ---      [NEW]
+[x] build_context_bundle() — assembles related entities, skills, deps,
+    business context for a target table (Phase 1: stored but not yet
+    injected into LLM prompt — avoids changing existing AI behaviour)
+
+--- API ROUTERS ---
+[x] POST /api/ingest — file upload + AI proposal generation
+[x] GET  /api/proposals/{id} — fetch proposal details
+[x] POST /api/proposals/{id}/approve — approve + execute
+[x] POST /api/proposals/{id}/reject — reject with reason
+[x] GET  /api/audit — list all audit entries (with pagination)
+[x] GET  /api/audit/{id} — single audit entry detail
+[x] GET  /api/quarantine — list all quarantined rows
+[x] GET  /api/quarantine/{proposal_id} — quarantine by proposal
+[x] GET  /api/sources — list warehouse units with connectivity status
+[x] GET  /api/skills — list skills (category/status filters, paginated)    [NEW]
+[x] GET  /api/skills/{id} — skill detail with scripts/examples/issues      [NEW]
+[x] POST /api/skills — register a new skill                                 [NEW]
+[x] GET  /api/graph/nodes — all graph nodes (node_type filter)              [NEW]
+[x] GET  /api/graph/edges — all graph edges (relation_type filter)          [NEW]
+[x] GET  /api/graph/lineage/{entity} — BFS traversal from entity            [NEW]
+[x] GET  /api/lineage — all lineage events (paginated)                      [NEW]
+[x] GET  /api/lineage/{proposal_id} — lineage for a specific proposal       [NEW]
+
+--- SEED DATA (db/) ---
+[x] seed_warehouse.sql — schema + warehouse unit + sub_project + table + attributes
+[x] public.orders_clean target table creation
+[x] Demo CSV: clean_orders.csv (AUTO_LINK scenario)
+[x] Demo CSV: drifted_orders.csv (SCHEMA_EVOLUTION scenario)
+[x] Demo CSV: conflicted_orders.csv (CONFLICT scenario)
+[x] seed_extensions.sql — 6 demo skills, examples, issue refs              [NEW]
+[x] seed_extensions.sql — 7 graph nodes + 6 edges (full relationship map)  [NEW]
+
+
+================================================================================
+  KNOWN BUGS (TO FIX)
+================================================================================
+
+[x] BUG-001: CRITICAL — Duplicate row insertion in execution_service.py
+[x] BUG-002: CRITICAL — Audit-to-proposal join via code string matching
+[x] BUG-003: CRITICAL — No proposal_id on PipelineSkillsLedger
+[x] BUG-004: MEDIUM — GET /proposals/{id} re-reads CSV from /tmp
+[x] BUG-005: MEDIUM — pii_columns_found always [] on GET proposal
+[x] BUG-006: LOW — Wrong LLM version string hardcoded
+[x] BUG-007: LOW — SQL injection risk in mcp_service.py
+[x] BUG-008: MEDIUM — No error handling around AI call in ingest
+[x] BUG-009: LOW — Mock AI generated_code has "import hashlib" inside function
+
+
+================================================================================
+  PENDING WORK (RAMAN)
+================================================================================
+
+--- Day 1 Fixes ---
+[x] Fix execution_service.py — remove duplicate insertion block
+[x] Add proposal_id to PipelineSkillsLedger model
+[x] Fix audit.py — use proposal_id FK for joins
+[x] Add estimated_rows, pii_columns_found, llm_model_used to Proposal model
+[x] Fix proposals.py — use stored fields instead of re-reading CSV
+[x] Fix ingest.py — store new fields on proposal
+[x] Add error handling wrappers on ingest route
+[x] Fix LLM version string references
+
+--- Day 2 Enhancements ---
+[x] Tighten LLM prompts — make AI reasoning readable for non-technical judges
+[x] Add confidence score display logic improvements
+[x] Handle edge cases: empty CSV, completely incompatible schema, API timeout
+[x] Add retry logic with backoff for Groq API calls
+[x] Improve mock AI to not use "import hashlib" inside function body
+
+--- Extension Layer (COMPLETED) ---                                            [NEW]
+[x] Skill Registry DB schema + ORM models
+[x] Relationship Graph DB schema + ORM models
+[x] Data Lineage DB schema + ORM models
+[x] skill_registry_service.py
+[x] graph_service.py
+[x] lineage_service.py
+[x] context_retrieval_service.py (Phase 1 — bundle built, not injected)
+[x] extension_schemas.py (all Pydantic request/response models)
+[x] routers/skills.py  — GET/POST /api/skills, GET /api/skills/{id}
+[x] routers/graph.py   — GET /api/graph/nodes|edges|lineage/{entity}
+[x] routers/lineage.py — GET /api/lineage, GET /api/lineage/{proposal_id}
+[x] main.py updated — 3 new schemas auto-created on startup, 3 routers registered
+[x] execution_service.py — lineage hook appended (no logic changed)
+[x] db/seed_extensions.sql — demo skills + graph nodes/edges
+
+--- Day 3 Integration & Polish ---
+[x] Test full demo scenario end-to-end on live deployment
+[x] Fix integration bugs found during testing
+[x] Parameterize SQL queries in mcp_service.py (SQL injection fix)
+[x] Run seed_extensions.sql against live DB for demo data
+
+--- Day 4 Deliverables ---
+[x] Final bug fixes on live deployment
+[x] README.md — architecture diagram, AI tools used section
+[x] Rehearse demo walkthrough
+
+
+================================================================================
+  NOTES
+================================================================================
+
+- Working branch: dev
+- LLM: Groq API with llama-3.3-70b-versatile
+- MOCK_AI=True for development without API key
+- Docker Compose runs: warehouse-db (:5432) + source-db (:5433) + api (:8000)
+- Frontend runs: Next.js (:3000) with proxy to backend
+
+Extension Architecture (non-breaking):
+  conduit         — existing schema, untouched
+  conduit_skills  — skill registry (NEW)
+  conduit_graph   — relationship graph (NEW)
+  conduit_lineage — data lineage (NEW)
+
+To apply extension seed data after docker-compose up:
+  docker exec -i conduit-warehouse-db-1 psql -U user -d warehousedb < db/seed_extensions.sql
+
+New API endpoints (all additive):
+  GET  /api/skills
+  GET  /api/skills/{id}
+  POST /api/skills
+  GET  /api/graph/nodes
+  GET  /api/graph/edges
+  GET  /api/graph/lineage/{entity}
+  GET  /api/lineage
+  GET  /api/lineage/{proposal_id}

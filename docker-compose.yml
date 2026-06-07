@@ -1,10 +1,9 @@
-version: "3.8"
 services:
   warehouse-db:
     image: postgres:15-alpine
     environment:
       POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
       POSTGRES_DB: warehousedb
     ports:
       - "5432:5432"
@@ -20,7 +19,7 @@ services:
     image: postgres:15-alpine
     environment:
       POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
       POSTGRES_DB: sourcedb
     ports:
       - "5433:5432"
@@ -31,10 +30,10 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - WAREHOUSE_DB_URL=postgresql+asyncpg://user:password@warehouse-db:5432/warehousedb
-      - SOURCE_DB_URL=postgresql+asyncpg://user:password@source-db:5432/sourcedb
+      - WAREHOUSE_DB_URL=postgresql+asyncpg://user:${POSTGRES_PASSWORD:-password}@warehouse-db:5432/warehousedb
+      - SOURCE_DB_URL=postgresql+asyncpg://user:${POSTGRES_PASSWORD:-password}@source-db:5432/sourcedb
       - GROQ_API_KEY=${GROQ_API_KEY}
-      - MOCK_AI=False
+      - MOCK_AI=${MOCK_AI}
       - ENVIRONMENT=development
     volumes:
       - ./backend:/app

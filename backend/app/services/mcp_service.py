@@ -69,17 +69,34 @@ async def list_registered_tables(db: AsyncSession) -> list[dict]:
     return out
 
 async def get_data_distribution(table_name: str, db: AsyncSession) -> dict:
+    import re
+    if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$", table_name):
+        raise ValueError("Invalid table name")
+
+    # STAGE 6 FIX: Validate table_name is a registered table before using it
+    # in dynamic SQL.  This prevents SQL injection even if the regex somehow
+    # allows a crafted name through (defence in depth).
+    simple_table_name = table_name.split(".")[-1] if "." in table_name else table_name
+    stmt_check = select(TableMetadata).where(TableMetadata.table_name == simple_table_name)
+    result_check = await db.execute(stmt_check)
+    if result_check.scalars().first() is None:
+        # Not a registered table — reject the query
+        return {}
+
     try:
         count_query = text(f"SELECT COUNT(*) FROM {table_name}")
         res = await db.execute(count_query)
         row_count = res.scalar()
 
         col_query = text(f"SELECT column_name FROM information_schema.columns WHERE table_name = :table_name")
-        res_cols = await db.execute(col_query, {"table_name": table_name})
+        res_cols = await db.execute(col_query, {"table_name": simple_table_name})
         cols = [r[0] for r in res_cols.fetchall()]
 
         columns = []
         for c in cols:
+            if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", c):
+                continue
+
             null_query = text(f"SELECT COUNT(*) - COUNT({c}) as nulls FROM {table_name}")
             res_null = await db.execute(null_query)
             null_count = res_null.scalar()

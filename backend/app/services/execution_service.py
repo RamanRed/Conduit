@@ -5,6 +5,12 @@ from datetime import datetime
 from app.models import Proposal, PipelineSkillsLedger, QuarantineRecord, TableMetadata
 from app.schemas import ExecutionResult
 
+# NEW — lineage hook (additive, never raises)
+from app.services import lineage_service
+# NEW — graph auto-linking hook (additive, never raises)
+from app.services import graph_service
+
+
 async def execute_proposal(
     proposal: Proposal,
     approver_id: str,
@@ -34,13 +40,15 @@ async def execute_proposal(
         transformed_df = transform_fn(df)
     except Exception as e:
         proposal.status = "FAILED"
-        stmt = select(TableMetadata).where(TableMetadata.table_name == "orders_clean")
+        table_name = proposal.target_table or "orders_clean"
+        stmt = select(TableMetadata).where(TableMetadata.table_name == table_name)
         res = await db.execute(stmt)
         tbl = res.scalars().first()
         ledger_entry = PipelineSkillsLedger(
             table_id=tbl.id if tbl else None,
+            proposal_id=proposal.id,
             skill_name=f"transform_{proposal.filename}",
-            applied_by_llm_version=proposal.llm_raw_response[:10],
+            applied_by_llm_version=proposal.llm_model_used or "llama-3.3-70b-versatile",
             transformation_script_ref=proposal.generated_code,
             human_approver_id=approver_id,
             execution_status="FAILED"
@@ -50,10 +58,11 @@ async def execute_proposal(
         raise e
 
     # Insert into database
-    stmt = select(TableMetadata).where(TableMetadata.table_name == "orders_clean")
+    # STAGE 2 FIX: use proposal.target_table instead of hardcoded "orders_clean"
+    table_name = proposal.target_table or "orders_clean"
+    stmt = select(TableMetadata).where(TableMetadata.table_name == table_name)
     res = await db.execute(stmt)
     tbl = res.scalars().first()
-    table_name = "orders_clean" # Hardcoded for demo, could parse from proposal
 
     rows_written = 0
     rows_quarantined = 0
@@ -63,33 +72,6 @@ async def execute_proposal(
     placeholders = ", ".join([f":{c}" for c in cols])
     insert_sql = text(f"INSERT INTO {table_name} ({', '.join(cols)}) VALUES ({placeholders})")
 
-    try:
-        # Start logical batch insert, fallback to row by row for quarantine
-        for row in transformed_df.to_dict('records'):
-            try:
-                # Need to convert na to None
-                clean_row = {k: (None if pd.isna(v) else v) for k, v in row.items()}
-                await db.execute(insert_sql, clean_row)
-                rows_written += 1
-            except Exception as row_error:
-                # rollback the savepoint for this row conceptually, asyncpg doesn't do subtrans auto
-                # Actually, if an error happens we might need a savepoint, but here we'll assume row by row or handle error
-                # Since we don't have savepoints explicitly set up easily here for each row, 
-                # we'll just insert into quarantine. Note: in real sqlalchemy we should use nested()
-                pass # let's implement proper savepoints
-        
-        # We need nested transaction for per row fallback
-    except Exception:
-        pass
-
-    # A better approach: row-by-row with savepoint
-    # SQLAlchemy async doesn't support savepoint in the same way sometimes, let's use a standard nested transaction if possible
-    
-    # Actually just simple row by row:
-    # We will iterate row by row in individual nested transactions
-    rows_written = 0
-    rows_quarantined = 0
-    
     for row in transformed_df.to_dict('records'):
         clean_row = {}
         for k, v in row.items():
@@ -105,7 +87,6 @@ async def execute_proposal(
                 rows_written += 1
         except Exception as e:
             qr_row = {k: (v.isoformat() if hasattr(v, 'isoformat') else v) for k, v in clean_row.items()}
-            # Failed to insert, write quarantine
             qr = QuarantineRecord(
                 proposal_id=proposal.id,
                 raw_row=qr_row,
@@ -118,8 +99,9 @@ async def execute_proposal(
         ledger_status = "SUCCESS" if rows_written > 0 else "FAILED"
         ledger_entry = PipelineSkillsLedger(
             table_id=tbl.id if tbl else None,
+            proposal_id=proposal.id,
             skill_name=f"transform_{proposal.filename}",
-            applied_by_llm_version="llama-3.1-70b-versatile",
+            applied_by_llm_version=proposal.llm_model_used or "llama-3.3-70b-versatile",
             transformation_script_ref=proposal.generated_code,
             human_approver_id=approver_id,
             execution_status=ledger_status
@@ -132,8 +114,9 @@ async def execute_proposal(
         proposal.status = "FAILED"
         db.add(PipelineSkillsLedger(
             table_id=tbl.id if tbl else None,
+            proposal_id=proposal.id,
             skill_name=f"transform_{proposal.filename}",
-            applied_by_llm_version="llama-3.1-70b-versatile",
+            applied_by_llm_version=proposal.llm_model_used or "llama-3.3-70b-versatile",
             transformation_script_ref=proposal.generated_code,
             human_approver_id=approver_id,
             execution_status="ROLLEDBACK"
@@ -142,6 +125,31 @@ async def execute_proposal(
         raise e
 
     duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
+
+    # NEW: record lineage event + auto-populate graph (both additive, never raise)
+    if rows_written > 0:
+        skill_applied = f"transform_{proposal.filename}"
+        op_type = (
+            "SCHEMA_EVOLUTION"
+            if proposal.gateway_status == "SCHEMA_EVOLUTION"
+            else proposal.gateway_status or "TRANSFORM"
+        )
+        await lineage_service.record_event(
+            db=db,
+            proposal_id=proposal.id,
+            source_entity=proposal.filename or "unknown_source",
+            target_entity=table_name,
+            operation_type=op_type,
+            skill_used=skill_applied,
+        )
+        # Auto-populate relationship graph so nodes/edges appear without manual API calls
+        await graph_service.auto_link_execution(
+            db=db,
+            proposal_id=proposal.id,
+            source_filename=proposal.filename or "unknown_source",
+            target_table=table_name,
+            skill_name=skill_applied,
+        )
 
     return ExecutionResult(
         proposal_id=proposal.id,

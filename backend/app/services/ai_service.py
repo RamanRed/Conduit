@@ -1,7 +1,9 @@
 import json
+import asyncio
 from groq import Groq
 from app.core.config import settings
 import traceback
+from typing import Optional
 
 client = Groq(api_key=settings.GROQ_API_KEY)
 MODEL = "llama-3.3-70b-versatile"
@@ -11,6 +13,7 @@ async def generate_pipeline_proposal(
     target_schema: dict,
     sample_rows: list[dict],
     table_metadata: dict,
+    context_bundle: Optional[dict] = None,   # STAGE 3: Phase 2 context injection
     retry_msg: str = None
 ) -> dict:
 
@@ -37,9 +40,13 @@ Response format:
   "generated_code": "string - complete valid Python function",
   "confidence_score": 0.0-1.0,
   "pii_columns_found": ["col1", "col2"],
-  "reasoning": "string - 2-3 sentences explaining the decisions made",
+  "reasoning": "string - 2-3 sentences explaining in non-technical, business-friendly terms what was transformed and why (WITHOUT any references to internal JSON structure, regex, code syntax, programming languages, database columns, or technical jargon).",
   "gateway_recommendation": "AUTO_LINK|SCHEMA_EVOLUTION|CONFLICT"
 }
+
+Rules for reasoning:
+- Explain decisions in non-technical, business-friendly terms (e.g., "The order_amount column was renamed to amount_usd to match the target schema standard for dollar amounts" or "Customer email values were hashed to protect sensitive data").
+- Do NOT mention code, syntax, regex, data types, database columns, JSON keys/structures, or programming concepts. Focus on what was transformed and why it makes business sense.
 
 Rules for gateway_recommendation:
 - AUTO_LINK: all columns match cleanly, zero or trivial drift 
@@ -57,6 +64,35 @@ Rules for generated_code:
 - Must add processed_at column: pd.Timestamp.now()
 - Return the transformed DataFrame"""
 
+    # ── STAGE 3: Build organizational context section for Phase 2 ──────────
+    context_section = ""
+    if context_bundle:
+        related_skills = context_bundle.get("related_skills", [])
+        related_entities = context_bundle.get("related_entities", [])
+        dependencies = context_bundle.get("dependencies", [])
+        business_context = context_bundle.get("business_context", [])
+        pii_columns_from_graph = context_bundle.get("pii_columns", [])
+
+        skills_block = ""
+        for sk in related_skills:
+            skills_block += f"\n  - {sk['name']} ({sk['category']}): {sk['description']}"
+
+        context_section = f"""
+
+ORGANIZATIONAL KNOWLEDGE CONTEXT:
+Known PII columns in this table (from graph): {', '.join(pii_columns_from_graph) if pii_columns_from_graph else 'none detected'}
+Related entities: {', '.join(e['name'] for e in related_entities) if related_entities else 'none'}
+Dependencies (tables this table reads from): {', '.join(d['name'] for d in dependencies) if dependencies else 'none'}
+Business KPI impact: {'; '.join(business_context) if business_context else 'not specified'}
+Registered skills that may apply:{skills_block if skills_block else ' none'}
+
+When generating the transformation:
+- Prefer strategies consistent with the registered skills above
+- Always mask the PII columns listed above, even if they appear safe
+- Be aware this table feeds the business KPIs listed above — schema changes have downstream impact
+"""
+    # ── End context section ───────────────────────────────────────────────
+
     user_message = f"""TARGET TABLE SCHEMA:
 {json.dumps(target_schema, indent=2)}
 
@@ -68,7 +104,7 @@ SAMPLE ROWS (first 5):
 
 TABLE BUSINESS CONTEXT:
 {json.dumps(table_metadata, indent=2)}
-
+{context_section}
 Analyze the drift and generate the transformation plan."""
 
     if retry_msg:
@@ -86,11 +122,12 @@ Analyze the drift and generate the transformation plan."""
                     {"column": "order_status", "issue_type": "NULL_VIOLATION", "source_value": "null", "target_expectation": "not null", "suggested_action": "fill nulls", "severity": "LOW"}
                 ],
                 "proposed_steps": ["Rename order_amount", "Drop discount_code", "Fill order_status"],
-                "generated_code": 'def transform(df: pd.DataFrame) -> pd.DataFrame:\n    df = df.rename(columns={"order_amount": "amount_usd"})\n    if "discount_code" in df.columns:\n        df = df.drop(columns=["discount_code"])\n    df["order_status"] = df["order_status"].fillna("unknown")\n    import hashlib\n    df["customer_email"] = df["customer_email"].apply(lambda x: hashlib.sha256(str(x).encode()).hexdigest() if pd.notnull(x) else x)\n    df["processed_at"] = pd.Timestamp.now()\n    df["created_at"] = pd.to_datetime(df["created_at"])\n    return df',
+                "generated_code": 'def transform(df: pd.DataFrame) -> pd.DataFrame:\n    df = df.rename(columns={"order_amount": "amount_usd"})\n    if "discount_code" in df.columns:\n        df = df.drop(columns=["discount_code"])\n    df["order_status"] = df["order_status"].fillna("unknown")\n    df["customer_email"] = df["customer_email"].apply(lambda x: hashlib.sha256(str(x).encode()).hexdigest() if pd.notnull(x) else x)\n    df["processed_at"] = pd.Timestamp.now()\n    df["created_at"] = pd.to_datetime(df["created_at"])\n    return df',
                 "confidence_score": 0.85,
                 "pii_columns_found": ["customer_email"],
                 "reasoning": "Mocked logic",
-                "gateway_recommendation": "SCHEMA_EVOLUTION"
+                "gateway_recommendation": "SCHEMA_EVOLUTION",
+                "context_aware": context_bundle is not None,
             })
         elif "amount_usd" in cols and "customer_email" not in cols:
             # CONFLICT mock
@@ -104,30 +141,43 @@ Analyze the drift and generate the transformation plan."""
                 "confidence_score": 0.60,
                 "pii_columns_found": [],
                 "reasoning": "Mocked logic",
-                "gateway_recommendation": "CONFLICT"
+                "gateway_recommendation": "CONFLICT",
+                "context_aware": context_bundle is not None,
             })
         else:
             # AUTO_LINK mock
             content = json.dumps({
                 "drift_detected": [],
                 "proposed_steps": ["Identity transform"],
-                "generated_code": 'def transform(df: pd.DataFrame) -> pd.DataFrame:\n    import hashlib\n    df["customer_email"] = df["customer_email"].apply(lambda x: hashlib.sha256(str(x).encode()).hexdigest() if pd.notnull(x) else x)\n    df["processed_at"] = pd.Timestamp.now()\n    df["created_at"] = pd.to_datetime(df["created_at"])\n    return df',
+                "generated_code": 'def transform(df: pd.DataFrame) -> pd.DataFrame:\n    df["customer_email"] = df["customer_email"].apply(lambda x: hashlib.sha256(str(x).encode()).hexdigest() if pd.notnull(x) else x)\n    df["processed_at"] = pd.Timestamp.now()\n    df["created_at"] = pd.to_datetime(df["created_at"])\n    return df',
                 "confidence_score": 0.95,
                 "pii_columns_found": ["customer_email"],
                 "reasoning": "Mocked logic",
-                "gateway_recommendation": "AUTO_LINK"
+                "gateway_recommendation": "AUTO_LINK",
+                "context_aware": context_bundle is not None,
             })
     else:
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message}
-            ],
-            temperature=0.1,
-            max_tokens=2000
-        )
-        content = response.choices[0].message.content
+        max_retries = 3
+        delay = 1.0
+        for attempt in range(max_retries + 1):
+            try:
+                response = client.chat.completions.create(
+                    model=MODEL,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message}
+                    ],
+                    temperature=0.1,
+                    max_tokens=2000
+                )
+                content = response.choices[0].message.content
+                break
+            except Exception as e:
+                if attempt < max_retries:
+                    await asyncio.sleep(delay)
+                    delay *= 2
+                else:
+                    raise e
 
     try:
         parsed = json.loads(content)
@@ -140,7 +190,8 @@ Analyze the drift and generate the transformation plan."""
     except json.JSONDecodeError:
         if retry_msg is None:
             return await generate_pipeline_proposal(
-                incoming_schema, target_schema, sample_rows, table_metadata, 
+                incoming_schema, target_schema, sample_rows, table_metadata,
+                context_bundle=context_bundle,
                 retry_msg="Your previous response was not valid JSON. Respond with ONLY the JSON object, no other text."
             )
         else:
