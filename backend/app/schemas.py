@@ -24,6 +24,9 @@ class ProposalResponse(BaseModel):
     # Phase 1 additions — AI reasoning in plain English
     reasoning: Optional[str] = None
     reasoning_note: Optional[str] = None
+    description_md: Optional[str] = None
+    suggested_skills_to_add: Optional[List[dict]] = None
+
 
 class ApproveRequest(BaseModel):
     human_approver_id: str

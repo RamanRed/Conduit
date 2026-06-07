@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import clsx from "clsx";
-import { listSkills } from "@/lib/api";
+import { listSkills, createSkill } from "@/lib/api";
 import type { SkillResponse, SkillStatus } from "@/lib/types";
 import { PageHeader, SectionHeader } from "@/components/page-header";
 import { formatRelative } from "@/lib/format";
@@ -68,6 +68,53 @@ export default function SkillsPage() {
   const [view, setView] = useState<"grid" | "table">("grid");
   const [search, setSearch] = useState("");
 
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newSkillName, setNewSkillName] = useState("");
+  const [newCategory, setNewCategory] = useState("DATA_CLEANING");
+  const [newDescription, setNewDescription] = useState("");
+  const [newVersion, setNewVersion] = useState("1.0.0");
+  const [newOwner, setNewOwner] = useState("");
+  const [newUseCases, setNewUseCases] = useState("");
+  const [newConstraints, setNewConstraints] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  async function handleCreateSkill(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newSkillName.trim() || !newDescription.trim()) {
+      setSubmitError("Name and description are required.");
+      return;
+    }
+    setIsSubmitting(true);
+    setSubmitError(null);
+    try {
+      const created = await createSkill({
+        skill_name: newSkillName.trim(),
+        category: newCategory,
+        description: newDescription.trim(),
+        version: newVersion.trim() || "1.0.0",
+        owner: newOwner.trim() || undefined,
+        use_cases: newUseCases.trim() || undefined,
+        constraints: newConstraints.trim() || undefined,
+        status: "ACTIVE",
+      });
+      setSkills((prev) => (prev ? [created, ...prev] : [created]));
+      setShowCreateModal(false);
+      setNewSkillName("");
+      setNewCategory("DATA_CLEANING");
+      setNewDescription("");
+      setNewVersion("1.0.0");
+      setNewOwner("");
+      setNewUseCases("");
+      setNewConstraints("");
+    } catch (err) {
+      console.error(err);
+      setSubmitError(String((err as Error).message ?? err));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   useEffect(() => {
     listSkills()
       .then(setSkills)
@@ -116,6 +163,12 @@ export default function SkillsPage() {
         description="Catalog of reusable data transformation skills. Skills are injected into the LLM context so generated transformations follow organizational standards."
         actions={
           <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="btn-primary h-8 text-xs px-3 font-semibold mr-2"
+            >
+              + Register Skill
+            </button>
             <button
               onClick={() => setView("grid")}
               className={
@@ -258,6 +311,139 @@ export default function SkillsPage() {
           No skills match these filters.
         </div>
       )}
+
+      {showCreateModal ? (
+        <div
+          className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 anim-fade"
+          onClick={() => setShowCreateModal(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="card p-5 w-full max-w-lg space-y-4 max-h-[90vh] overflow-y-auto"
+          >
+            <div>
+              <h3 className="text-sm font-semibold">Register New Skill</h3>
+              <p className="text-2xs text-fg-muted mt-0.5">
+                Add a new data transformation skill to the central registry.
+              </p>
+            </div>
+            
+            <form onSubmit={handleCreateSkill} className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label" htmlFor="new_name">Skill name *</label>
+                  <input
+                    id="new_name"
+                    type="text"
+                    className="input font-mono text-xs"
+                    value={newSkillName}
+                    onChange={(e) => setNewSkillName(e.target.value)}
+                    placeholder="e.g. format_postal_code"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="label" htmlFor="new_cat">Category *</label>
+                  <select
+                    id="new_cat"
+                    className="input text-xs"
+                    value={newCategory}
+                    onChange={(e) => setNewCategory(e.target.value)}
+                  >
+                    <option value="DATA_CLEANING">Data Cleaning</option>
+                    <option value="SECURITY">Security</option>
+                    <option value="SCHEMA_EVOLUTION">Schema Evolution</option>
+                    <option value="DATETIME_STANDARDIZATION">Datetime Standardization</option>
+                    <option value="VALIDATION">Validation</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label" htmlFor="new_ver">Version</label>
+                  <input
+                    id="new_ver"
+                    type="text"
+                    className="input font-mono text-xs"
+                    value={newVersion}
+                    onChange={(e) => setNewVersion(e.target.value)}
+                    placeholder="1.0.0"
+                  />
+                </div>
+                <div>
+                  <label className="label" htmlFor="new_owner">Owner</label>
+                  <input
+                    id="new_owner"
+                    type="text"
+                    className="input text-xs"
+                    value={newOwner}
+                    onChange={(e) => setNewOwner(e.target.value)}
+                    placeholder="e.g. jdoe"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="label" htmlFor="new_desc">Description *</label>
+                <textarea
+                  id="new_desc"
+                  className="input min-h-16 py-1 h-auto text-xs"
+                  value={newDescription}
+                  onChange={(e) => setNewDescription(e.target.value)}
+                  placeholder="What does this transformation skill do?"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="label" htmlFor="new_cases">Use cases</label>
+                <textarea
+                  id="new_cases"
+                  className="input min-h-16 py-1 h-auto text-xs"
+                  value={newUseCases}
+                  onChange={(e) => setNewUseCases(e.target.value)}
+                  placeholder="When should this skill be applied?"
+                />
+              </div>
+
+              <div>
+                <label className="label" htmlFor="new_cons">Constraints</label>
+                <textarea
+                  id="new_cons"
+                  className="input min-h-16 py-1 h-auto text-xs"
+                  value={newConstraints}
+                  onChange={(e) => setNewConstraints(e.target.value)}
+                  placeholder="E.g. Column must contain string, maximum length, etc."
+                />
+              </div>
+
+              {submitError && (
+                <div className="text-2xs text-danger border border-danger-border bg-danger-bg rounded p-2">
+                  {submitError}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateModal(false)}
+                  className="btn-ghost"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="btn-primary"
+                >
+                  {isSubmitting ? "Registering..." : "Register skill"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

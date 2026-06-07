@@ -18,6 +18,7 @@ import type {
   SkillDetailResponse,
   SkillResponse,
   WarehouseUnitResponse,
+  SuggestTargetResponse,
 } from "./types";
 
 const API_BASE = "/api";
@@ -45,15 +46,32 @@ async function handle<T>(res: Response): Promise<T> {
 export async function ingestFile(
   file: File,
   targetTable: string,
+  descriptionMd?: string,
 ): Promise<ProposalResponse> {
   const form = new FormData();
   form.append("file", file);
   form.append("target_table", targetTable);
+  if (descriptionMd) {
+    form.append("description_md", descriptionMd);
+  }
   const res = await fetch(`${API_BASE}/ingest`, {
     method: "POST",
     body: form,
   });
   return handle<ProposalResponse>(res);
+}
+
+
+export async function suggestTargetTable(
+  file: File,
+): Promise<SuggestTargetResponse> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${API_BASE}/suggest-target`, {
+    method: "POST",
+    body: form,
+  });
+  return handle<SuggestTargetResponse>(res);
 }
 
 export async function listProposals(params?: {

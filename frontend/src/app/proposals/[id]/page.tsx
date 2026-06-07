@@ -6,6 +6,7 @@ import Link from "next/link";
 import clsx from "clsx";
 import {
   approveProposal,
+  createSkill,
   getProposal,
   getProposalContext,
   listAuditForProposal,
@@ -156,6 +157,17 @@ export default function ProposalDetailPage() {
           </div>
         </div>
       </div>
+
+      {proposal.description_md ? (
+        <div className="card p-4 bg-bg-subtle border-border space-y-2 anim-in">
+          <div className="text-2xs font-semibold uppercase tracking-wider text-fg-muted">
+            Dataset Description
+          </div>
+          <div className="text-xs text-fg leading-relaxed whitespace-pre-line font-mono bg-white p-3 border border-border-subtle rounded max-h-48 overflow-y-auto">
+            {proposal.description_md}
+          </div>
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-12 gap-6">
         <div className="col-span-8 space-y-6">
@@ -395,6 +407,10 @@ export default function ProposalDetailPage() {
             </dl>
           </div>
 
+          {proposal.suggested_skills_to_add && proposal.suggested_skills_to_add.length > 0 ? (
+            <SuggestedSkillsCard skills={proposal.suggested_skills_to_add} />
+          ) : null}
+
           <div className="card p-4 space-y-3">
             <div>
               <div className="text-sm font-semibold">Proposed steps</div>
@@ -559,11 +575,18 @@ function ContextBundleTab({
   }
 
   if (error) {
+    const is404 = error.includes("404");
     return (
       <div className="p-4">
-        <div className="rounded-md border border-danger-border bg-danger-bg p-3 text-sm text-danger">
-          {error}
-        </div>
+        {is404 ? (
+          <div className="text-sm text-fg-muted">
+            No context bundle was stored for this proposal (e.g., it skipped the AI generation path because of zero matching columns or pre-dates the extensions layer).
+          </div>
+        ) : (
+          <div className="rounded-md border border-danger-border bg-danger-bg p-3 text-sm text-danger">
+            {error}
+          </div>
+        )}
       </div>
     );
   }
@@ -741,6 +764,89 @@ function ContextBundleTab({
           />
         </div>
       </details>
+    </div>
+  );
+}
+
+function SuggestedSkillsCard({
+  skills,
+}: {
+  skills: Array<{ skill_name: string; description: string; category: string }>;
+}) {
+  const [registered, setRegistered] = useState<Record<string, "pending" | "success" | "error">>({});
+
+  async function handleAddSkill(name: string, desc: string, cat: string) {
+    setRegistered((prev) => ({ ...prev, [name]: "pending" }));
+    try {
+      await createSkill({
+        skill_name: name,
+        description: desc,
+        category: cat,
+        version: "1.0.0",
+        owner: "system",
+        status: "ACTIVE",
+      });
+      setRegistered((prev) => ({ ...prev, [name]: "success" }));
+    } catch (e) {
+      console.error("Failed to add skill:", e);
+      setRegistered((prev) => ({ ...prev, [name]: "error" }));
+    }
+  }
+
+  return (
+    <div className="card p-4 space-y-3 border-warning-border bg-warning-bg/10">
+      <div>
+        <div className="text-sm font-semibold text-warning flex items-center gap-1.5">
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          Suggested Skills to Add
+        </div>
+        <p className="text-2xs text-fg-muted mt-0.5">
+          The AI recommends registering these reusable transformation skills.
+        </p>
+      </div>
+      <div className="space-y-3 pt-1">
+        {skills.map((s, idx) => {
+          const status = registered[s.skill_name];
+          return (
+            <div key={idx} className="p-3 bg-white rounded border border-warning-border/30 space-y-2">
+              <div className="flex items-start justify-between gap-2">
+                <span className="font-mono text-xs font-semibold break-all text-fg">{s.skill_name}</span>
+                <span className="badge text-3xs font-mono uppercase tracking-wider text-fg-muted bg-bg-subtle border border-border whitespace-nowrap">
+                  {s.category.replace(/_/g, " ")}
+                </span>
+              </div>
+              <p className="text-2xs text-fg-muted leading-relaxed">{s.description}</p>
+              <div>
+                {status === "success" ? (
+                  <span className="text-3xs text-success font-semibold flex items-center gap-1 font-mono">
+                    ✓ Registered successfully!
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => handleAddSkill(s.skill_name, s.description, s.category)}
+                    disabled={status === "pending"}
+                    className={clsx(
+                      "text-3xs px-2 py-1 border rounded font-semibold transition-colors font-mono",
+                      status === "pending"
+                        ? "bg-bg-subtle border-border text-fg-muted cursor-not-allowed"
+                        : "bg-white hover:bg-bg-subtle border-border hover:border-fg-subtle text-fg"
+                    )}
+                  >
+                    {status === "pending" ? "Registering..." : "+ Add to registry"}
+                  </button>
+                )}
+                {status === "error" && (
+                  <span className="text-3xs text-danger block mt-1 font-mono">
+                    Failed to register. Check console.
+                  </span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

@@ -35,7 +35,14 @@ export interface ProposalResponse {
   llm_model_used: string;
   reasoning?: string | null;
   reasoning_note?: string | null;
+  description_md?: string | null;
+  suggested_skills_to_add?: Array<{
+    skill_name: string;
+    description: string;
+    category: string;
+  }> | null;
 }
+
 
 export interface ExecutionResult {
   proposal_id: string;
@@ -204,3 +211,22 @@ export interface ProposalContextResponse {
   context_bundle?: Record<string, unknown> | null;
   generated_at: string;
 }
+
+export interface TableSuggestion {
+  table_name: string;
+  final_score: number;
+  column_match_score: number;
+  data_profile_score: number;
+  llm_confidence: number;
+  llm_reasoning: string;
+  matched_columns: string[];
+  missing_columns: string[];
+  extra_columns: string[];
+}
+
+export interface SuggestTargetResponse {
+  data_understanding: string;
+  incoming_columns: string[];
+  suggestions: TableSuggestion[];
+}
+

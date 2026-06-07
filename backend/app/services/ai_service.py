@@ -14,7 +14,8 @@ async def generate_pipeline_proposal(
     sample_rows: list[dict],
     table_metadata: dict,
     context_bundle: Optional[dict] = None,   # STAGE 3: Phase 2 context injection
-    retry_msg: str = None
+    retry_msg: str = None,
+    description_md: Optional[str] = None
 ) -> dict:
 
     system_prompt = """You are a data engineering AI. Your job is to analyze schema 
@@ -41,7 +42,14 @@ Response format:
   "confidence_score": 0.0-1.0,
   "pii_columns_found": ["col1", "col2"],
   "reasoning": "string - 2-3 sentences explaining in non-technical, business-friendly terms what was transformed and why (WITHOUT any references to internal JSON structure, regex, code syntax, programming languages, database columns, or technical jargon).",
-  "gateway_recommendation": "AUTO_LINK|SCHEMA_EVOLUTION|CONFLICT"
+  "gateway_recommendation": "AUTO_LINK|SCHEMA_EVOLUTION|CONFLICT",
+  "suggested_skills_to_add": [
+    {
+      "skill_name": "string (lowercase_with_underscores, e.g., format_zipcode)",
+      "description": "string (clear description of what this skill does and why it is recommended)",
+      "category": "string (DATA_CLEANING|SECURITY|SCHEMA_EVOLUTION|DATETIME_STANDARDIZATION|VALIDATION)"
+    }
+  ]
 }
 
 Rules for reasoning:
@@ -62,7 +70,11 @@ Rules for generated_code:
 - Must handle every drift item detected
 - Must mask PII columns: replace value with SHA256 hash
 - Must add processed_at column: pd.Timestamp.now()
-- Return the transformed DataFrame"""
+- Return the transformed DataFrame
+
+Rules for suggested_skills_to_add:
+- If the registered skills (provided in ORGANIZATIONAL KNOWLEDGE CONTEXT) are not sufficient or available to handle the detected schema drift, and you had to write custom Python logic for it, suggest 1 or more reusable skills that should be added to the registry for this task.
+- If the registered skills already cover everything, return an empty list `[]`."""
 
     # ── STAGE 3: Build organizational context section for Phase 2 ──────────
     context_section = ""
@@ -93,12 +105,17 @@ When generating the transformation:
 """
     # ── End context section ───────────────────────────────────────────────
 
+    # ── User-provided dataset description ────────────────────────────────
+    description_section = ""
+    if description_md:
+        description_section = f"\nINCOMING DATASET DESCRIPTION (provided by user):\n{description_md}\n"
+
     user_message = f"""TARGET TABLE SCHEMA:
 {json.dumps(target_schema, indent=2)}
 
 INCOMING DATA SCHEMA (columns detected):
 {json.dumps(incoming_schema, indent=2)}
-
+{description_section}
 SAMPLE ROWS (first 5):
 {json.dumps(sample_rows, indent=2)}
 
@@ -127,6 +144,13 @@ Analyze the drift and generate the transformation plan."""
                 "pii_columns_found": ["customer_email"],
                 "reasoning": "Mocked logic",
                 "gateway_recommendation": "SCHEMA_EVOLUTION",
+                "suggested_skills_to_add": [
+                    {
+                        "skill_name": "normalize_currency",
+                        "description": "Standardize currencies to standard currency values and format decimal representation.",
+                        "category": "DATA_CLEANING"
+                    }
+                ],
                 "context_aware": context_bundle is not None,
             })
         elif "amount_usd" in cols and "customer_email" not in cols:
@@ -142,6 +166,7 @@ Analyze the drift and generate the transformation plan."""
                 "pii_columns_found": [],
                 "reasoning": "Mocked logic",
                 "gateway_recommendation": "CONFLICT",
+                "suggested_skills_to_add": [],
                 "context_aware": context_bundle is not None,
             })
         else:
@@ -154,6 +179,7 @@ Analyze the drift and generate the transformation plan."""
                 "pii_columns_found": ["customer_email"],
                 "reasoning": "Mocked logic",
                 "gateway_recommendation": "AUTO_LINK",
+                "suggested_skills_to_add": [],
                 "context_aware": context_bundle is not None,
             })
     else:
@@ -192,7 +218,85 @@ Analyze the drift and generate the transformation plan."""
             return await generate_pipeline_proposal(
                 incoming_schema, target_schema, sample_rows, table_metadata,
                 context_bundle=context_bundle,
-                retry_msg="Your previous response was not valid JSON. Respond with ONLY the JSON object, no other text."
+                retry_msg="Your previous response was not valid JSON. Respond with ONLY the JSON object, no other text.",
+                description_md=description_md
             )
         else:
             raise Exception(f"Failed to parse JSON from AI response: {content}")
+
+
+async def generate_skill_script(skill_name: str, description: str, category: str) -> str:
+    """
+    Generate Python transformation code for a registered skill.
+    Uses the Groq completion API or returns mock templates if settings.MOCK_AI is active.
+    """
+    if settings.MOCK_AI:
+        if skill_name == "normalize_currency":
+            return '''def transform(df: pd.DataFrame, config: dict) -> pd.DataFrame:
+    # Standardize currencies to standard currency values and format decimal representation.
+    columns = config.get("columns", [])
+    if not columns:
+        columns = [c for c in df.columns if "amount" in c.lower() or "price" in c.lower() or "currency" in c.lower()]
+    for col in columns:
+        if col in df.columns:
+            # Strip currency symbols and commas, then convert to numeric
+            df[col] = df[col].astype(str).str.replace(r'[^\\d\\.]', '', regex=True)
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    return df
+'''
+        else:
+            return f'''def transform(df: pd.DataFrame, config: dict) -> pd.DataFrame:
+    # Implement: {description}
+    columns = config.get("columns", [])
+    for col in columns:
+        if col in df.columns:
+            pass
+    return df
+'''
+
+    system_prompt = (
+        "You are an expert data engineer. Write a python function that implements a pandas data transformation skill.\\n"
+        "The function MUST follow this exact signature:\\n"
+        "def transform(df: pd.DataFrame, config: dict) -> pd.DataFrame:\\n"
+        "    ...\\n\\n"
+        "Rules:\\n"
+        "1. Write clean, robust pandas code that implements the requested skill.\\n"
+        "2. The 'config' dictionary can contain parameters like 'columns' (list of columns to apply to) and other parameters.\\n"
+        "3. Assume pandas is imported as pd in the environment. Do not write 'import pandas as pd' inside the function, though you can use 'pd.' directly. Do not import any other libraries unless absolutely necessary (like re, math).\\n"
+        "4. Do NOT use unsafe features (e.g. os, sys, eval, exec, subprocess, open).\\n"
+        "5. The output must be ONLY the raw Python code. Do not wrap the code in markdown code fences or backticks (e.g., do not use ```python). No explanation text before or after."
+    )
+    user_msg = f"Skill Name: {skill_name}\\nCategory: {category}\\nDescription: {description}\\nGenerate the transform function."
+
+    try:
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_msg}
+            ],
+            temperature=0.1,
+            max_tokens=1500
+        )
+        code = response.choices[0].message.content.strip()
+        # Strip code blocks if LLM still returned them
+        if code.startswith("```python"):
+            code = code[9:]
+        elif code.startswith("```"):
+            code = code[3:]
+        if code.endswith("```"):
+            code = code[:-3]
+        return code.strip()
+    except Exception as e:
+        # Fallback to simple template on failure
+        return f'''def transform(df: pd.DataFrame, config: dict) -> pd.DataFrame:
+    # Fallback template for {skill_name}
+    # Description: {description}
+    columns = config.get("columns", [])
+    for col in columns:
+        if col in df.columns:
+            pass
+    return df
+'''
+
+

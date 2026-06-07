@@ -94,3 +94,6 @@ class Proposal(Base):
     estimated_rows = Column(Integer, nullable=True)
     pii_columns_found = Column(JSON, nullable=True)
     llm_model_used = Column(String, nullable=True)
+    description_md = Column(String, nullable=True)
+    suggested_skills_to_add = Column(JSON, nullable=True)
+

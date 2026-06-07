@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
 import clsx from "clsx";
-import { ingestFile } from "@/lib/api";
-import type { ProposalResponse } from "@/lib/types";
+import { ingestFile, suggestTargetTable } from "@/lib/api";
+import type { ProposalResponse, TableSuggestion } from "@/lib/types";
 import { PageHeader } from "@/components/page-header";
 import { GatewayBadge } from "@/components/badges";
 import { formatBytes } from "@/lib/format";
@@ -50,6 +50,7 @@ const STEP_DURATION_MS = 900;
 export default function IngestPage() {
   const [file, setFile] = useState<File | null>(null);
   const [targetTable, setTargetTable] = useState("orders_clean");
+  const [descriptionMd, setDescriptionMd] = useState("");
   const [dragging, setDragging] = useState(false);
   const [phase, setPhase] = useState<Phase>("idle");
   const [stepIndex, setStepIndex] = useState(0);
@@ -58,12 +59,39 @@ export default function IngestPage() {
   );
   const [error, setError] = useState<string | null>(null);
   const [proposal, setProposal] = useState<ProposalResponse | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [suggestions, setSuggestions] = useState<TableSuggestion[] | null>(null);
+  const [dataUnderstanding, setDataUnderstanding] = useState<string | null>(null);
+  const [manualMode, setManualMode] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const stepTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const clearTimers = useCallback(() => {
     stepTimers.current.forEach((t) => clearTimeout(t));
     stepTimers.current = [];
+  }, []);
+
+  const analyzeFile = useCallback(async (f: File) => {
+    setIsAnalyzing(true);
+    setSuggestions(null);
+    setDataUnderstanding(null);
+    setManualMode(false);
+    setError(null);
+    try {
+      const res = await suggestTargetTable(f);
+      setSuggestions(res.suggestions);
+      setDataUnderstanding(res.data_understanding);
+      if (res.suggestions.length > 0) {
+        setTargetTable(res.suggestions[0].table_name);
+      } else {
+        setManualMode(true);
+      }
+    } catch (err) {
+      console.error("Failed to suggest target table:", err);
+      setManualMode(true);
+    } finally {
+      setIsAnalyzing(false);
+    }
   }, []);
 
   useEffect(() => () => clearTimers(), [clearTimers]);
@@ -75,14 +103,16 @@ export default function IngestPage() {
     if (f) {
       setFile(f);
       setError(null);
+      analyzeFile(f);
     }
-  }, []);
+  }, [analyzeFile]);
 
   const onSelect = useCallback((f: File | null) => {
     if (!f) return;
     setFile(f);
     setError(null);
-  }, []);
+    analyzeFile(f);
+  }, [analyzeFile]);
 
   function reset() {
     clearTimers();
@@ -92,6 +122,11 @@ export default function IngestPage() {
     setPhase("idle");
     setStepIndex(0);
     setStepStatus(STEPS.map(() => "pending"));
+    setSuggestions(null);
+    setDataUnderstanding(null);
+    setManualMode(false);
+    setIsAnalyzing(false);
+    setDescriptionMd("");
     if (inputRef.current) inputRef.current.value = "";
   }
 
@@ -123,7 +158,7 @@ export default function IngestPage() {
     }
 
     try {
-      const p = await ingestFile(file, targetTable);
+      const p = await ingestFile(file, targetTable, descriptionMd);
       clearTimers();
       setStepStatus((prev) => {
         const next = [...prev];
@@ -213,22 +248,160 @@ export default function IngestPage() {
               </div>
             </div>
 
-            <div>
-              <label className="label" htmlFor="target_table">
-                Target table
-              </label>
-              <input
-                id="target_table"
-                type="text"
-                className="input font-mono"
-                value={targetTable}
-                onChange={(e) => setTargetTable(e.target.value)}
-                placeholder="e.g. orders_clean"
-              />
-              <p className="mt-1.5 text-2xs text-fg-muted">
-                The registered table in the conduit metadata store
-              </p>
-            </div>
+            {isAnalyzing && (
+              <div className="rounded-lg border border-border bg-bg-subtle p-6 text-center space-y-3 anim-in">
+                <div className="flex justify-center">
+                  <svg className="animate-spin h-6 w-6 text-fg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                </div>
+                <div className="text-sm font-medium">Analyzing data schema & semantics...</div>
+                <div className="text-2xs text-fg-muted">Profiling columns, value distributions, and querying AI relations</div>
+              </div>
+            )}
+
+            {!isAnalyzing && file && (
+              <div className="space-y-4 anim-in">
+                <div>
+                  <label className="label" htmlFor="description_md">
+                    Dataset Description (Markdown)
+                  </label>
+                  <textarea
+                    id="description_md"
+                    className="input min-h-24 py-2 h-auto text-sm leading-relaxed"
+                    placeholder="Enter a description of this data in markdown format (e.g., details about columns, expected formats, or business logic)..."
+                    value={descriptionMd}
+                    onChange={(e) => setDescriptionMd(e.target.value)}
+                  />
+                  <p className="text-2xs text-fg-muted">
+                    This context helps the AI understand the business purpose of the dataset and perform better transformations.
+                  </p>
+                </div>
+                {dataUnderstanding && (
+                  <div className="rounded-md bg-bg-subtle border border-border p-3">
+                    <div className="text-2xs font-semibold uppercase tracking-wider text-fg-muted mb-1 flex items-center gap-1.5">
+                      <svg className="w-3.5 h-3.5 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 21l8.982-8.982M18 10a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                      AI Data Understanding
+                    </div>
+                    <p className="text-xs text-fg leading-relaxed">{dataUnderstanding}</p>
+                  </div>
+                )}
+
+                {manualMode ? (
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <label className="label" htmlFor="target_table">
+                        Target table
+                      </label>
+                      {suggestions && suggestions.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setManualMode(false)}
+                          className="text-2xs text-fg-muted hover:text-fg underline font-mono"
+                        >
+                          Use suggestions
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      id="target_table"
+                      type="text"
+                      className="input font-mono"
+                      value={targetTable}
+                      onChange={(e) => setTargetTable(e.target.value)}
+                      placeholder="e.g. orders_clean"
+                    />
+                    <p className="text-2xs text-fg-muted">
+                      Type the target table registered in the conduit metadata store
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center">
+                      <label className="label">Suggested Target Table</label>
+                      <button
+                        type="button"
+                        onClick={() => setManualMode(true)}
+                        className="text-2xs text-fg-muted hover:text-fg underline font-mono"
+                      >
+                        Enter manually
+                      </button>
+                    </div>
+
+                    {suggestions && suggestions.length > 0 ? (
+                      <div className="space-y-3">
+                        {suggestions.map((sug) => {
+                          const isSelected = targetTable === sug.table_name;
+                          const scorePercent = Math.round(sug.final_score * 100);
+                          const scoreColor =
+                            sug.final_score > 0.8
+                              ? "bg-success-bg text-success border-success-border"
+                              : sug.final_score > 0.5
+                              ? "bg-warning-bg text-warning border-warning-border"
+                              : "bg-danger-bg text-danger border-danger-border";
+
+                          return (
+                            <div
+                              key={sug.table_name}
+                              onClick={() => setTargetTable(sug.table_name)}
+                              className={clsx(
+                                "p-4 rounded-lg border-2 transition-all cursor-pointer flex flex-col gap-2.5",
+                                isSelected
+                                  ? "border-fg bg-white"
+                                  : "border-border hover:border-fg-subtle bg-bg-subtle",
+                              )}
+                            >
+                              <div className="flex justify-between items-start">
+                                <div className="space-y-0.5">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-mono text-sm font-semibold">{sug.table_name}</span>
+                                    {sug === suggestions[0] && (
+                                      <span className="badge bg-fg text-bg text-3xs font-semibold px-1 py-0.25 uppercase tracking-wider rounded">
+                                        Best Match
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                                <span className={clsx("badge border text-xs px-2 py-0.5 font-bold font-mono", scoreColor)}>
+                                  {scorePercent}% match
+                                </span>
+                              </div>
+
+                              <p className="text-xs text-fg-muted italic leading-relaxed">
+                                &ldquo;{sug.llm_reasoning}&rdquo;
+                              </p>
+
+                              <div className="flex flex-wrap gap-2 text-3xs font-mono mt-1">
+                                <span className="text-success bg-success-bg border border-success-border px-1.5 py-0.5 rounded">
+                                  ✓ {sug.matched_columns.length} matched
+                                </span>
+                                {sug.missing_columns.length > 0 && (
+                                  <span className="text-warning bg-warning-bg border border-warning-border px-1.5 py-0.5 rounded">
+                                    ⚠️ {sug.missing_columns.length} missing in upload
+                                  </span>
+                                )}
+                                {sug.extra_columns.length > 0 && (
+                                  <span className="text-fg-muted bg-bg-subtle border border-border px-1.5 py-0.5 rounded">
+                                    + {sug.extra_columns.length} extra columns
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-border p-4 text-center text-xs text-fg-muted bg-bg-subtle">
+                        No matching tables found. Please click &quot;Enter manually&quot; above.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {error ? (
               <div className="rounded-md border border-danger-border bg-danger-bg p-3 text-sm text-danger">
@@ -240,7 +413,7 @@ export default function IngestPage() {
               <button
                 type="submit"
                 className="btn-primary"
-                disabled={!file}
+                disabled={!file || isAnalyzing}
               >
                 Generate proposal
               </button>

@@ -6,8 +6,13 @@ import {
 } from "@/lib/format";
 import type { GatewayStatus, Severity } from "@/lib/types";
 
-export function GatewayBadge({ status }: { status: GatewayStatus }) {
-  const c = gatewayColor(status);
+export function GatewayBadge({ status }: { status: GatewayStatus | string | null | undefined }) {
+  const c = gatewayColor(status) || {
+    fg: "text-danger",
+    bg: "bg-danger-bg",
+    border: "border-danger-border",
+    label: "Conflict",
+  };
   return (
     <span
       className={clsx(
@@ -30,17 +35,17 @@ export function GatewayBadge({ status }: { status: GatewayStatus }) {
   );
 }
 
-export function SeverityBadge({ severity }: { severity: Severity }) {
-  const c = severityColor(severity);
+export function SeverityBadge({ severity }: { severity: Severity | string | null | undefined }) {
+  const c = severityColor(severity) || { fg: "text-fg-muted", bg: "bg-bg-subtle", border: "border-border" };
   return (
     <span className={clsx("badge uppercase tracking-wider", c.fg, c.bg, c.border)}>
-      {severity}
+      {severity || "LOW"}
     </span>
   );
 }
 
-export function ExecutionBadge({ status }: { status: string }) {
-  const c = executionColor(status);
+export function ExecutionBadge({ status }: { status: string | null | undefined }) {
+  const c = executionColor(status || "FAILED") || { fg: "text-fg-muted", bg: "bg-bg-subtle", border: "border-border" };
   return (
     <span
       className={clsx("badge uppercase tracking-wider", c.fg, c.bg, c.border)}
@@ -50,13 +55,14 @@ export function ExecutionBadge({ status }: { status: string }) {
           "w-1.5 h-1.5 rounded-full",
           status === "SUCCESS" && "bg-success",
           (status === "FAILED" || status === "ROLLEDBACK") && "bg-danger",
-          !["SUCCESS", "FAILED", "ROLLEDBACK"].includes(status) && "bg-fg-muted",
+          !["SUCCESS", "FAILED", "ROLLEDBACK"].includes(status || "") && "bg-fg-muted",
         )}
       />
-      {status}
+      {status || "FAILED"}
     </span>
   );
 }
+
 
 export function StatusDot({ status }: { status: string }) {
   const color =

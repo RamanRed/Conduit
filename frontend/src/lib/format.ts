@@ -1,12 +1,13 @@
 import type { GatewayStatus, Severity } from "./types";
 
-export function gatewayColor(g: GatewayStatus): {
+export function gatewayColor(g: GatewayStatus | string | undefined | null): {
   fg: string;
   bg: string;
   border: string;
   label: string;
 } {
-  switch (g) {
+  const val = (g || "CONFLICT").toUpperCase();
+  switch (val) {
     case "AUTO_LINK":
       return {
         fg: "text-success",
@@ -22,6 +23,7 @@ export function gatewayColor(g: GatewayStatus): {
         label: "Schema Evolution",
       };
     case "CONFLICT":
+    default:
       return {
         fg: "text-danger",
         bg: "bg-danger-bg",
@@ -31,12 +33,13 @@ export function gatewayColor(g: GatewayStatus): {
   }
 }
 
-export function severityColor(s: Severity): {
+export function severityColor(s: Severity | string | undefined | null): {
   fg: string;
   bg: string;
   border: string;
 } {
-  switch (s) {
+  const val = (s || "LOW").toUpperCase();
+  switch (val) {
     case "LOW":
       return { fg: "text-fg-muted", bg: "bg-bg-subtle", border: "border-border" };
     case "MEDIUM":
@@ -46,13 +49,17 @@ export function severityColor(s: Severity): {
         border: "border-warning-border",
       };
     case "HIGH":
+    case "CRITICAL":
       return {
         fg: "text-danger",
         bg: "bg-danger-bg",
         border: "border-danger-border",
       };
+    default:
+      return { fg: "text-fg-muted", bg: "bg-bg-subtle", border: "border-border" };
   }
 }
+
 
 export function executionColor(s: string): {
   fg: string;

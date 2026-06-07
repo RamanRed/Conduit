@@ -61,8 +61,11 @@ async def on_startup():
         # Existing schema (UNCHANGED)
         await conn.execute(text("CREATE SCHEMA IF NOT EXISTS conduit"))
         await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(text("ALTER TABLE conduit.proposals ADD COLUMN IF NOT EXISTS description_md TEXT"))
+        await conn.execute(text("ALTER TABLE conduit.proposals ADD COLUMN IF NOT EXISTS suggested_skills_to_add JSONB"))
 
         # NEW — extension schemas (purely additive)
+
         await conn.execute(text("CREATE SCHEMA IF NOT EXISTS conduit_skills"))
         await conn.execute(text("CREATE SCHEMA IF NOT EXISTS conduit_graph"))
         await conn.execute(text("CREATE SCHEMA IF NOT EXISTS conduit_lineage"))
