@@ -11,3 +11,4 @@ backend/app/**/__pycache__/
 node_modules/
 .next/
 out/
+*.tsbuildinfo

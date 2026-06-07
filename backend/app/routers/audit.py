@@ -1,20 +1,35 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.database import get_db
 from app.models import Proposal, PipelineSkillsLedger
 from app.schemas import AuditEntry
-from typing import List
+from typing import List, Optional
 
 router = APIRouter()
 
 @router.get("/audit", response_model=List[AuditEntry])
-async def get_audit(limit: int = 50, offset: int = 0, db: AsyncSession = Depends(get_db)):
+async def get_audit(
+    limit: int = 50,
+    offset: int = 0,
+    proposal_id: Optional[str] = Query(
+        None,
+        description="If set, return only the audit ledger entry for this proposal_id (most recent first, 0 or 1 rows).",
+    ),
+    db: AsyncSession = Depends(get_db),
+):
     # Simple join, we will fetch ledger and then proposal for missing fields (filename, llm_prompt)
-    stmt = select(PipelineSkillsLedger, Proposal).join(Proposal, PipelineSkillsLedger.proposal_id == Proposal.id, isouter=True).order_by(PipelineSkillsLedger.executed_at.desc()).limit(limit).offset(offset)
+    stmt = (
+        select(PipelineSkillsLedger, Proposal)
+        .join(Proposal, PipelineSkillsLedger.proposal_id == Proposal.id, isouter=True)
+        .order_by(PipelineSkillsLedger.executed_at.desc())
+    )
+    if proposal_id is not None:
+        stmt = stmt.where(PipelineSkillsLedger.proposal_id == proposal_id)
+    stmt = stmt.limit(limit).offset(offset)
     res = await db.execute(stmt)
     rows = res.all()
-    
+
     entries = []
     for ledger, proposal in rows:
         entries.append(AuditEntry(

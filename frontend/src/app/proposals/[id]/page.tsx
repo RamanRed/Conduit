@@ -6,22 +6,24 @@ import Link from "next/link";
 import clsx from "clsx";
 import {
   approveProposal,
-  getAuditEntry,
   getProposal,
+  getProposalContext,
+  listAuditForProposal,
   rejectProposal,
 } from "@/lib/api";
 import type {
   AuditEntry,
   ExecutionResult,
+  ProposalContextResponse,
   ProposalResponse,
 } from "@/lib/types";
 import { PageHeader, SectionHeader } from "@/components/page-header";
 import { GatewayBadge, SeverityBadge } from "@/components/badges";
 import { CodeBlock } from "@/components/code-block";
 import { CopyButton } from "@/components/copy-button";
-import { formatBytes, formatRelative } from "@/lib/format";
+import { formatRelative } from "@/lib/format";
 
-type Tab = "drift" | "code" | "prompt";
+type Tab = "drift" | "code" | "prompt" | "context";
 
 export default function ProposalDetailPage() {
   const params = useParams<{ id: string }>();
@@ -30,6 +32,9 @@ export default function ProposalDetailPage() {
 
   const [proposal, setProposal] = useState<ProposalResponse | null>(null);
   const [audit, setAudit] = useState<AuditEntry | null>(null);
+  const [context, setContext] = useState<ProposalContextResponse | null>(null);
+  const [contextLoading, setContextLoading] = useState(false);
+  const [contextError, setContextError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("drift");
 
@@ -49,24 +54,27 @@ export default function ProposalDetailPage() {
       .catch((e) => setError(String(e.message ?? e)));
   }, [id]);
 
-  // Try to find a matching audit entry by proposal id (best effort)
+  useEffect(() => {
+    if (tab !== "context" || !id || context) return;
+    setContextLoading(true);
+    setContextError(null);
+    getProposalContext(id)
+      .then(setContext)
+      .catch((e) => setContextError(String(e.message ?? e)))
+      .finally(() => setContextLoading(false));
+  }, [tab, id, context]);
+
+  // Look up the audit ledger entry for this proposal (only exists after execution)
   useEffect(() => {
     if (!id) return;
-    // Heuristic: scan common IDs in a small range to find a match
-    async function tryFetch() {
-      for (let i = 1; i <= 50; i++) {
-        try {
-          const a = await getAuditEntry(i);
-          if (a.proposal_id === id) {
-            setAudit(a);
-            return;
-          }
-        } catch {
-          // ignore
-        }
-      }
-    }
-    tryFetch();
+    setAudit(null);
+    listAuditForProposal(id)
+      .then((rows) => {
+        if (rows.length > 0) setAudit(rows[0]);
+      })
+      .catch(() => {
+        // no audit entry yet — this is expected for unexecuted proposals
+      });
   }, [id]);
 
   async function handleApprove() {
@@ -78,15 +86,10 @@ export default function ProposalDetailPage() {
       setActionResult(res);
       // Re-fetch audit entry to update state
       if (res.proposal_id) {
-        for (let i = 1; i <= 50; i++) {
-          try {
-            const a = await getAuditEntry(i);
-            if (a.proposal_id === res.proposal_id) {
-              setAudit(a);
-              break;
-            }
-          } catch {}
-        }
+        try {
+          const rows = await listAuditForProposal(res.proposal_id);
+          if (rows.length > 0) setAudit(rows[0]);
+        } catch {}
       }
     } catch (e) {
       setActionError(String((e as Error).message ?? e));
@@ -163,6 +166,7 @@ export default function ProposalDetailPage() {
                   { key: "drift", label: "Drift" },
                   { key: "code", label: "Generated code" },
                   { key: "prompt", label: "AI prompt" },
+                  { key: "context", label: "AI context bundle" },
                 ] as { key: Tab; label: string }[]
               ).map((t) => (
                 <button
@@ -278,6 +282,14 @@ export default function ProposalDetailPage() {
                   </div>
                 ) : null}
               </div>
+            )}
+
+            {tab === "context" && (
+              <ContextBundleTab
+                context={context}
+                loading={contextLoading}
+                error={contextError}
+              />
             )}
           </div>
 
@@ -523,6 +535,212 @@ export default function ProposalDetailPage() {
           </div>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function ContextBundleTab({
+  context,
+  loading,
+  error,
+}: {
+  context: ProposalContextResponse | null;
+  loading: boolean;
+  error: string | null;
+}) {
+  if (loading) {
+    return (
+      <div className="p-4 space-y-3 anim-fade">
+        <div className="h-20 rounded bg-bg-subtle" />
+        <div className="h-32 rounded bg-bg-subtle" />
+        <div className="h-20 rounded bg-bg-subtle" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-4">
+        <div className="rounded-md border border-danger-border bg-danger-bg p-3 text-sm text-danger">
+          {error}
+        </div>
+      </div>
+    );
+  }
+
+  if (!context || !context.context_bundle) {
+    return (
+      <div className="p-4 text-sm text-fg-muted">
+        No context bundle was stored for this proposal. The bundle is built
+        and persisted during ingest (Phase 1) — proposals created before
+        Phase 1 will not have one.
+      </div>
+    );
+  }
+
+  const bundle = context.context_bundle;
+  const relatedSkills = Array.isArray(bundle.related_skills)
+    ? (bundle.related_skills as Array<Record<string, unknown>>)
+    : [];
+  const relatedEntities = Array.isArray(bundle.related_entities)
+    ? (bundle.related_entities as Array<Record<string, unknown>>)
+    : [];
+  const dependencies = Array.isArray(bundle.dependencies)
+    ? (bundle.dependencies as Array<Record<string, unknown>>)
+    : [];
+  const businessContext = Array.isArray(bundle.business_context)
+    ? (bundle.business_context as Array<string>)
+    : [];
+  const piiColumns = Array.isArray(bundle.pii_columns)
+    ? (bundle.pii_columns as Array<string>)
+    : [];
+
+  return (
+    <div className="p-4 space-y-4">
+      <div className="flex items-center justify-between text-2xs text-fg-muted">
+        <div>
+          Built during ingest · target{" "}
+          <span className="font-mono text-fg">
+            {(bundle.target_table as string | undefined) ?? context.target_table ?? "—"}
+          </span>
+        </div>
+        <div className="font-mono">{formatRelative(context.generated_at)}</div>
+      </div>
+
+      {piiColumns.length > 0 ? (
+        <div className="card p-3 border-danger-border bg-danger-bg">
+          <div className="text-2xs font-medium uppercase tracking-wider text-danger">
+            PII columns
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {piiColumns.map((c, i) => (
+              <span
+                key={i}
+                className="badge font-mono text-danger bg-white border-danger-border"
+              >
+                {c}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="card p-3">
+          <div className="text-2xs font-medium uppercase tracking-wider text-fg-muted">
+            Related skills
+          </div>
+          {relatedSkills.length === 0 ? (
+            <div className="mt-2 text-2xs text-fg-subtle">
+              No matching skills found.
+            </div>
+          ) : (
+            <ul className="mt-2 space-y-1.5">
+              {relatedSkills.map((s, i) => (
+                <li
+                  key={i}
+                  className="text-sm flex items-center justify-between gap-2"
+                >
+                  <div className="min-w-0">
+                    <div className="font-mono text-xs truncate">
+                      {String(s.name ?? "—")}
+                    </div>
+                    <div className="text-2xs text-fg-muted truncate">
+                      {String(s.description ?? "")}
+                    </div>
+                  </div>
+                  <span className="badge font-mono uppercase tracking-wider text-fg-muted bg-bg-subtle border-border whitespace-nowrap">
+                    {String(s.category ?? "—").replace(/_/g, " ")}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="card p-3">
+          <div className="text-2xs font-medium uppercase tracking-wider text-fg-muted">
+            Related entities
+          </div>
+          {relatedEntities.length === 0 ? (
+            <div className="mt-2 text-2xs text-fg-subtle">
+              No related entities within 2 hops.
+            </div>
+          ) : (
+            <ul className="mt-2 space-y-1.5">
+              {relatedEntities.map((e, i) => (
+                <li
+                  key={i}
+                  className="text-sm flex items-center justify-between gap-2"
+                >
+                  <span className="font-mono text-xs truncate">
+                    {String(e.name ?? "—")}
+                  </span>
+                  <span className="badge font-mono uppercase tracking-wider text-fg-muted bg-bg-subtle border-border whitespace-nowrap">
+                    {String(e.type ?? "—").replace(/_/g, " ")}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+
+      <div className="card p-3">
+        <div className="text-2xs font-medium uppercase tracking-wider text-fg-muted">
+          Direct dependencies
+        </div>
+        {dependencies.length === 0 ? (
+          <div className="mt-2 text-2xs text-fg-subtle">
+            No direct dependencies recorded.
+          </div>
+        ) : (
+          <ul className="mt-2 space-y-1.5">
+            {dependencies.map((d, i) => (
+              <li
+                key={i}
+                className="text-sm flex items-center justify-between gap-2"
+              >
+                <span className="font-mono text-xs truncate">
+                  {String(d.name ?? "—")}
+                </span>
+                <span className="badge font-mono uppercase tracking-wider text-fg-muted bg-bg-subtle border-border whitespace-nowrap">
+                  {String(d.type ?? "—").replace(/_/g, " ")}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {businessContext.length > 0 ? (
+        <div className="card p-3">
+          <div className="text-2xs font-medium uppercase tracking-wider text-fg-muted">
+            Business context
+          </div>
+          <ul className="mt-2 space-y-1.5 text-sm text-fg leading-relaxed">
+            {businessContext.map((b, i) => (
+              <li key={i} className="flex gap-2">
+                <span className="text-fg-subtle">·</span>
+                <span>{b}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      <details className="card p-3">
+        <summary className="text-2xs font-medium uppercase tracking-wider text-fg-muted cursor-pointer">
+          Raw JSON
+        </summary>
+        <div className="mt-3">
+          <CodeBlock
+            code={JSON.stringify(bundle, null, 2)}
+            language="json"
+            maxHeight="max-h-96"
+          />
+        </div>
+      </details>
     </div>
   );
 }

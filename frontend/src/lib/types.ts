@@ -25,6 +25,7 @@ export interface DriftItem {
 export interface ProposalResponse {
   proposal_id: string;
   gateway_status: GatewayStatus;
+  target_table?: string | null;
   drift_detected: DriftItem[];
   proposed_steps: string[];
   generated_code: string;
@@ -32,6 +33,8 @@ export interface ProposalResponse {
   pii_columns_found: string[];
   estimated_rows: number;
   llm_model_used: string;
+  reasoning?: string | null;
+  reasoning_note?: string | null;
 }
 
 export interface ExecutionResult {
@@ -76,4 +79,128 @@ export interface ApproveRequest {
 
 export interface RejectRequest {
   reason: string;
+}
+
+/* ─── Extension types ──────────────────────────────────────── */
+
+export type SkillStatus = "ACTIVE" | "DRAFT" | "DEPRECATED";
+
+export interface SkillResponse {
+  id: number;
+  skill_name: string;
+  version: string;
+  category: string;
+  description: string;
+  use_cases?: string | null;
+  constraints?: string | null;
+  owner?: string | null;
+  status: SkillStatus;
+  created_at?: string | null;
+}
+
+export interface SkillExample {
+  input?: unknown;
+  output?: unknown;
+}
+
+export interface SkillIssueRef {
+  reference?: string | null;
+  notes?: string | null;
+}
+
+export interface SkillDetailResponse extends SkillResponse {
+  scripts?: Array<Record<string, unknown>>;
+  examples?: SkillExample[];
+  issue_references?: SkillIssueRef[];
+}
+
+export interface CreateSkillRequest {
+  skill_name: string;
+  version?: string;
+  category: string;
+  description: string;
+  use_cases?: string | null;
+  constraints?: string | null;
+  owner?: string | null;
+  status?: SkillStatus;
+}
+
+export interface GraphNodeResponse {
+  id: number;
+  node_type?: string | null;
+  entity_id?: string | null;
+  entity_name?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface GraphEdgeResponse {
+  id: number;
+  source_node_id: number;
+  target_node_id: number;
+  relation_type?: string | null;
+  confidence_score?: number;
+  created_at?: string | null;
+}
+
+export interface CreateGraphNodeRequest {
+  node_type: string;
+  entity_id: string;
+  entity_name?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface CreateGraphEdgeRequest {
+  source_node_id: number;
+  target_node_id: number;
+  relation_type: string;
+  confidence_score?: number;
+}
+
+export interface LineageEventResponse {
+  id: number;
+  proposal_id?: string | null;
+  source_entity?: string | null;
+  target_entity?: string | null;
+  operation_type?: string | null;
+  skill_used?: string | null;
+  executed_at?: string | null;
+}
+
+export interface LineageGraphResponse {
+  nodes: GraphNodeResponse[];
+  edges: GraphEdgeResponse[];
+}
+
+export interface ImpactedNode {
+  node: GraphNodeResponse;
+  depth: number;
+  relation_type: string;
+  path: string[];
+}
+
+export interface ImpactAnalysisResponse {
+  entity: string;
+  start_nodes: GraphNodeResponse[];
+  impacted_nodes: ImpactedNode[];
+  total_impacted: number;
+}
+
+export interface NeighborDetail {
+  direction: string;
+  relation_type?: string | null;
+  confidence_score: number;
+  node: GraphNodeResponse;
+}
+
+export interface NeighborsResponse {
+  node_id: number;
+  neighbors: NeighborDetail[];
+  total: number;
+}
+
+export interface ProposalContextResponse {
+  proposal_id: string;
+  target_table?: string | null;
+  context_bundle?: Record<string, unknown> | null;
+  generated_at: string;
 }
