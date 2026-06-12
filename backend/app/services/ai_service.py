@@ -49,7 +49,8 @@ Response format:
       "description": "string (clear description of what this skill does and why it is recommended)",
       "category": "string (DATA_CLEANING|SECURITY|SCHEMA_EVOLUTION|DATETIME_STANDARDIZATION|VALIDATION)"
     }
-  ]
+  ],
+  "enrichment_applied": ["string - list of enrichment rules applied"]
 }
 
 Rules for reasoning:
@@ -71,6 +72,12 @@ Rules for generated_code:
 - Must mask PII columns: replace value with SHA256 hash
 - Must add processed_at column: pd.Timestamp.now()
 - Return the transformed DataFrame
+
+Rules for generated_code (ENRICHMENT):
+- If numeric columns exist, add an `amount_tier` derived column classifying values as 'low' (< 25th pct), 'medium', and 'high' (> 75th pct).
+- Flag potential duplicate rows by adding a `is_potential_duplicate` boolean column (True if all non-ID columns match another row).
+- Flag numeric outliers by adding `{col}_outlier` boolean columns (e.g. `amount_outlier` or `amount_usd_outlier`) for values beyond 1.5× IQR.
+- Record any applied enrichment rules in the `enrichment_applied` field (e.g., ["amount_tier", "outlier_detection", "duplicate_flagging"]).
 
 Rules for suggested_skills_to_add:
 - If the registered skills (provided in ORGANIZATIONAL KNOWLEDGE CONTEXT) are not sufficient or available to handle the detected schema drift, and you had to write custom Python logic for it, suggest 1 or more reusable skills that should be added to the registry for this task.
@@ -132,17 +139,37 @@ Analyze the drift and generate the transformation plan."""
         cols = list(incoming_schema.keys())
         if "order_amount" in cols:
             # SCHEMA_EVOLUTION mock
+            generated_code = (
+                "def transform(df: pd.DataFrame) -> pd.DataFrame:\n"
+                "    import hashlib\n"
+                "    df = df.rename(columns={\"order_amount\": \"amount_usd\"})\n"
+                "    if \"discount_code\" in df.columns:\n"
+                "        df = df.drop(columns=[\"discount_code\"])\n"
+                "    df[\"order_status\"] = df[\"order_status\"].fillna(\"completed\")\n"
+                "    df[\"customer_email\"] = df[\"customer_email\"].apply(lambda x: hashlib.sha256(str(x).encode()).hexdigest() if pd.notnull(x) else x)\n"
+                "    df[\"amount_usd\"] = df[\"amount_usd\"].astype(str).str.replace(\",\", \"\").astype(float)\n"
+                "    q25 = df[\"amount_usd\"].quantile(0.25)\n"
+                "    q75 = df[\"amount_usd\"].quantile(0.75)\n"
+                "    df[\"amount_tier\"] = pd.cut(df[\"amount_usd\"], bins=[-float('inf'), q25, q75, float('inf')], labels=[\"low\", \"medium\", \"high\"]).astype(str)\n"
+                "    iqr = q75 - q25\n"
+                "    df[\"amount_outlier\"] = (df[\"amount_usd\"] < q25 - 1.5 * iqr) | (df[\"amount_usd\"] > q75 + 1.5 * iqr)\n"
+                "    dup_cols = [c for c in df.columns if c != \"order_id\" and c not in [\"processed_at\", \"amount_tier\", \"amount_outlier\"]]\n"
+                "    df[\"is_potential_duplicate\"] = df.duplicated(subset=dup_cols, keep=False)\n"
+                "    df[\"processed_at\"] = pd.Timestamp.now()\n"
+                "    df[\"created_at\"] = pd.to_datetime(df[\"created_at\"])\n"
+                "    return df"
+            )
             content = json.dumps({
                 "drift_detected": [
                     {"column": "order_amount", "issue_type": "RENAME", "source_value": "order_amount", "target_expectation": "amount_usd", "suggested_action": "rename to amount_usd", "severity": "LOW"},
                     {"column": "discount_code", "issue_type": "EXTRA_COLUMN", "source_value": "discount_code", "target_expectation": "none", "suggested_action": "drop column", "severity": "LOW"},
                     {"column": "order_status", "issue_type": "NULL_VIOLATION", "source_value": "null", "target_expectation": "not null", "suggested_action": "fill nulls", "severity": "LOW"}
                 ],
-                "proposed_steps": ["Rename order_amount", "Drop discount_code", "Fill order_status"],
-                "generated_code": 'def transform(df: pd.DataFrame) -> pd.DataFrame:\n    df = df.rename(columns={"order_amount": "amount_usd"})\n    if "discount_code" in df.columns:\n        df = df.drop(columns=["discount_code"])\n    df["order_status"] = df["order_status"].fillna("unknown")\n    df["customer_email"] = df["customer_email"].apply(lambda x: hashlib.sha256(str(x).encode()).hexdigest() if pd.notnull(x) else x)\n    df["processed_at"] = pd.Timestamp.now()\n    df["created_at"] = pd.to_datetime(df["created_at"])\n    return df',
+                "proposed_steps": ["Rename order_amount to amount_usd", "Drop discount_code column", "Fill null statuses", "Enrich with amount_tier", "Enrich with amount_outlier", "Enrich with duplicate_detection"],
+                "generated_code": generated_code,
                 "confidence_score": 0.85,
                 "pii_columns_found": ["customer_email"],
-                "reasoning": "Mocked logic",
+                "reasoning": "Standardized currency amount by renaming and cleaning values, masked customer email PII using SHA-256, and auto-enriched with amount tier classification, amount outlier flags, and near-duplicate markers.",
                 "gateway_recommendation": "SCHEMA_EVOLUTION",
                 "suggested_skills_to_add": [
                     {
@@ -151,35 +178,69 @@ Analyze the drift and generate the transformation plan."""
                         "category": "DATA_CLEANING"
                     }
                 ],
+                "enrichment_applied": ["amount_tier", "outlier_detection", "duplicate_flagging"],
                 "context_aware": context_bundle is not None,
             })
         elif "amount_usd" in cols and "customer_email" not in cols:
             # CONFLICT mock
+            generated_code = (
+                "def transform(df: pd.DataFrame) -> pd.DataFrame:\n"
+                "    # Attempt basic enrichment\n"
+                "    df[\"amount_usd\"] = pd.to_numeric(df[\"amount_usd\"], errors='coerce')\n"
+                "    q25 = df[\"amount_usd\"].quantile(0.25)\n"
+                "    q75 = df[\"amount_usd\"].quantile(0.75)\n"
+                "    df[\"amount_tier\"] = pd.cut(df[\"amount_usd\"], bins=[-float('inf'), q25, q75, float('inf')], labels=[\"low\", \"medium\", \"high\"]).astype(str)\n"
+                "    iqr = q75 - q25\n"
+                "    df[\"amount_outlier\"] = (df[\"amount_usd\"] < q25 - 1.5 * iqr) | (df[\"amount_usd\"] > q75 + 1.5 * iqr)\n"
+                "    dup_cols = [c for c in df.columns if c != \"order_id\" and c not in [\"processed_at\", \"amount_tier\", \"amount_outlier\"]]\n"
+                "    df[\"is_potential_duplicate\"] = df.duplicated(subset=dup_cols, keep=False)\n"
+                "    df[\"processed_at\"] = pd.Timestamp.now()\n"
+                "    df[\"created_at\"] = pd.to_datetime(df[\"created_at\"])\n"
+                "    return df"
+            )
             content = json.dumps({
                 "drift_detected": [
                     {"column": "order_id", "issue_type": "TYPE_MISMATCH", "source_value": "string", "target_expectation": "integer", "suggested_action": "cannot convert safely", "severity": "HIGH"},
                     {"column": "customer_email", "issue_type": "MISSING_REQUIRED", "source_value": "missing", "target_expectation": "string", "suggested_action": "missing required column", "severity": "HIGH"}
                 ],
-                "proposed_steps": ["Fail"],
-                "generated_code": 'def transform(df: pd.DataFrame) -> pd.DataFrame:\n    df["created_at"] = pd.to_datetime(df["created_at"])\n    return df',
+                "proposed_steps": ["Fail due to validation errors"],
+                "generated_code": generated_code,
                 "confidence_score": 0.60,
                 "pii_columns_found": [],
-                "reasoning": "Mocked logic",
+                "reasoning": "Failed to map order ID format and detected missing required customer email column. Potential enrichment applied to available order amounts.",
                 "gateway_recommendation": "CONFLICT",
                 "suggested_skills_to_add": [],
+                "enrichment_applied": ["amount_tier", "outlier_detection", "duplicate_flagging"],
                 "context_aware": context_bundle is not None,
             })
         else:
             # AUTO_LINK mock
+            generated_code = (
+                "def transform(df: pd.DataFrame) -> pd.DataFrame:\n"
+                "    import hashlib\n"
+                "    df[\"customer_email\"] = df[\"customer_email\"].apply(lambda x: hashlib.sha256(str(x).encode()).hexdigest() if pd.notnull(x) else x)\n"
+                "    df[\"amount_usd\"] = df[\"amount_usd\"].astype(float)\n"
+                "    q25 = df[\"amount_usd\"].quantile(0.25)\n"
+                "    q75 = df[\"amount_usd\"].quantile(0.75)\n"
+                "    df[\"amount_tier\"] = pd.cut(df[\"amount_usd\"], bins=[-float('inf'), q25, q75, float('inf')], labels=[\"low\", \"medium\", \"high\"]).astype(str)\n"
+                "    iqr = q75 - q25\n"
+                "    df[\"amount_outlier\"] = (df[\"amount_usd\"] < q25 - 1.5 * iqr) | (df[\"amount_usd\"] > q75 + 1.5 * iqr)\n"
+                "    dup_cols = [c for c in df.columns if c != \"order_id\" and c not in [\"processed_at\", \"amount_tier\", \"amount_outlier\"]]\n"
+                "    df[\"is_potential_duplicate\"] = df.duplicated(subset=dup_cols, keep=False)\n"
+                "    df[\"processed_at\"] = pd.Timestamp.now()\n"
+                "    df[\"created_at\"] = pd.to_datetime(df[\"created_at\"])\n"
+                "    return df"
+            )
             content = json.dumps({
                 "drift_detected": [],
-                "proposed_steps": ["Identity transform"],
-                "generated_code": 'def transform(df: pd.DataFrame) -> pd.DataFrame:\n    df["customer_email"] = df["customer_email"].apply(lambda x: hashlib.sha256(str(x).encode()).hexdigest() if pd.notnull(x) else x)\n    df["processed_at"] = pd.Timestamp.now()\n    df["created_at"] = pd.to_datetime(df["created_at"])\n    return df',
+                "proposed_steps": ["Identity transform with enrichment"],
+                "generated_code": generated_code,
                 "confidence_score": 0.95,
                 "pii_columns_found": ["customer_email"],
-                "reasoning": "Mocked logic",
+                "reasoning": "Masked customer email PII using SHA-256 and enriched with amount tier classification, amount outlier flags, and potential duplicate markers.",
                 "gateway_recommendation": "AUTO_LINK",
                 "suggested_skills_to_add": [],
+                "enrichment_applied": ["amount_tier", "outlier_detection", "duplicate_flagging"],
                 "context_aware": context_bundle is not None,
             })
     else:

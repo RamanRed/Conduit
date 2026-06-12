@@ -96,4 +96,17 @@ class Proposal(Base):
     llm_model_used = Column(String, nullable=True)
     description_md = Column(String, nullable=True)
     suggested_skills_to_add = Column(JSON, nullable=True)
+    enrichment_applied = Column(JSON, nullable=True)
 
+
+class InsightRecord(Base):
+    __tablename__ = "insight_records"
+    __table_args__ = {"schema": "conduit"}
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    proposal_id = Column(String, ForeignKey("conduit.proposals.id", ondelete="CASCADE"))
+    category = Column(String)       # CONCENTRATION | ANOMALY | DATA_QUALITY | TREND | PATTERN
+    severity = Column(String)       # INFO | WARNING | CRITICAL
+    title = Column(String)
+    description = Column(String)
+    evidence = Column(JSON)         # Raw statistics backing the insight
+    created_at = Column(DateTime, default=datetime.utcnow)

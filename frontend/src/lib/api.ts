@@ -19,6 +19,7 @@ import type {
   SkillResponse,
   WarehouseUnitResponse,
   SuggestTargetResponse,
+  InsightItem,
 } from "./types";
 
 const API_BASE = "/api";
@@ -26,10 +27,15 @@ const API_BASE = "/api";
 async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {
     let detail: unknown;
+    const clone = res.clone();
     try {
       detail = await res.json();
     } catch {
-      detail = await res.text();
+      try {
+        detail = await clone.text();
+      } catch {
+        detail = "Could not parse error response body";
+      }
     }
     const err = new Error(
       `API ${res.status}: ${typeof detail === "string" ? detail : JSON.stringify(detail)}`,
@@ -320,3 +326,45 @@ export async function getLineageForProposal(
     await fetch(`${API_BASE}/lineage/${proposalId}`),
   );
 }
+
+/* ─── Insights ─────────────────────────────────────────────── */
+
+export async function listInsights(params?: {
+  category?: string;
+  severity?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<InsightItem[]> {
+  const q = new URLSearchParams();
+  if (params?.category) q.set("category", params.category);
+  if (params?.severity) q.set("severity", params.severity);
+  if (params?.limit !== undefined) q.set("limit", String(params.limit));
+  if (params?.offset !== undefined) q.set("offset", String(params.offset));
+  const qs = q.toString();
+  return handle<InsightItem[]>(
+    await fetch(`${API_BASE}/insights${qs ? `?${qs}` : ""}`),
+  );
+}
+
+export async function getInsightsForProposal(
+  proposalId: string,
+): Promise<InsightItem[]> {
+  return handle<InsightItem[]>(
+    await fetch(`${API_BASE}/insights/${proposalId}`),
+  );
+}
+
+export async function getInsightsSummary(): Promise<{
+  total: number;
+  by_category: Record<string, number>;
+  by_severity: Record<string, number>;
+  recent_critical: InsightItem[];
+}> {
+  return handle<{
+    total: number;
+    by_category: Record<string, number>;
+    by_severity: Record<string, number>;
+    recent_critical: InsightItem[];
+  }>(await fetch(`${API_BASE}/insights/summary`));
+}
+

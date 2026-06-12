@@ -76,5 +76,9 @@ CREATE TABLE IF NOT EXISTS public.orders_clean (
   order_status VARCHAR(50),
   customer_email VARCHAR(255),
   created_at TIMESTAMP,
-  processed_at TIMESTAMP
+  processed_at TIMESTAMP,
+  amount_tier VARCHAR(20),
+  amount_outlier BOOLEAN,
+  is_potential_duplicate BOOLEAN
 );
+

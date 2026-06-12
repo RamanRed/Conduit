@@ -10,6 +10,7 @@ const PRIMARY = [
   { href: "/proposals", label: "Proposals" },
   { href: "/audit", label: "Audit" },
   { href: "/quarantine", label: "Quarantine" },
+  { href: "/insights", label: "Insights" },
 ];
 
 const EXTENSIONS = [

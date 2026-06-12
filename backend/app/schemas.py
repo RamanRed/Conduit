@@ -10,6 +10,23 @@ class DriftItem(BaseModel):
     suggested_action: str
     severity: str
 
+class InsightItem(BaseModel):
+    id: int
+    proposal_id: str
+    category: str
+    severity: str
+    title: str
+    description: str
+    evidence: Optional[dict] = None
+    created_at: Optional[datetime] = None
+
+class InsightSummary(BaseModel):
+    proposal_id: str
+    target_table: str
+    rows_analyzed: int
+    insights: List[InsightItem]
+    generated_at: Optional[datetime] = None
+
 class ProposalResponse(BaseModel):
     proposal_id: str
     gateway_status: str
@@ -26,6 +43,7 @@ class ProposalResponse(BaseModel):
     reasoning_note: Optional[str] = None
     description_md: Optional[str] = None
     suggested_skills_to_add: Optional[List[dict]] = None
+    enrichment_applied: Optional[List[str]] = None
 
 
 class ApproveRequest(BaseModel):
@@ -40,6 +58,7 @@ class ExecutionResult(BaseModel):
     rows_quarantined: int
     execution_status: str
     duration_ms: int
+    insights: Optional[List[InsightItem]] = None
 
 class AuditEntry(BaseModel):
     id: int
@@ -65,3 +84,4 @@ class WarehouseUnitResponse(BaseModel):
     name: str
     unit_type: str
     status: str
+

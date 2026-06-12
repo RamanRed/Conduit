@@ -10,6 +10,7 @@ import {
   listSkills,
   listSources,
   listGraphNodes,
+  listInsights,
 } from "@/lib/api";
 import type {
   AuditEntry,
@@ -17,6 +18,7 @@ import type {
   ProposalResponse,
   QuarantineEntry,
   WarehouseUnitResponse,
+  InsightItem,
 } from "@/lib/types";
 import { GatewayBadge, StatusDot, ExecutionBadge } from "@/components/badges";
 import { PageHeader } from "@/components/page-header";
@@ -78,6 +80,7 @@ export default function OverviewPage() {
   const [sources, setSources] = useState<WarehouseUnitResponse[] | null>(null);
   const [skillCount, setSkillCount] = useState<number | null>(null);
   const [graphNodeCount, setGraphNodeCount] = useState<number | null>(null);
+  const [insights, setInsights] = useState<InsightItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -89,8 +92,9 @@ export default function OverviewPage() {
       listSources(),
       listSkills({ limit: 1 }),
       listGraphNodes({ limit: 1 }),
+      listInsights({ limit: 4 }),
     ])
-      .then(([p, a, q, s, sk, gn]) => {
+      .then(([p, a, q, s, sk, gn, ins]) => {
         if (cancelled) return;
         setProposals(p);
         setAudit(a);
@@ -98,6 +102,7 @@ export default function OverviewPage() {
         setSources(s);
         setSkillCount(sk.length);
         setGraphNodeCount(gn.length);
+        setInsights(ins);
       })
       .catch((e) => !cancelled && setError(String(e.message ?? e)));
     return () => {
@@ -109,7 +114,8 @@ export default function OverviewPage() {
     proposals === null ||
     audit === null ||
     quarantine === null ||
-    sources === null;
+    sources === null ||
+    insights === null;
 
   const proposalCount = proposals?.length ?? 0;
   const autoLinked = proposals?.filter((p) => p.gateway_status === "AUTO_LINK").length ?? 0;
@@ -352,6 +358,62 @@ export default function OverviewPage() {
                       </div>
                     </div>
                     <ExecutionBadge status={a.execution_status} />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="panel">
+            <div className="panel-header">
+              <div>
+                <h3 className="text-sm font-semibold">Recent insights</h3>
+                <p className="text-2xs text-fg-muted mt-0.5">
+                  Discovered patterns, anomalies, and quality findings
+                </p>
+              </div>
+              <Link href="/insights" className="btn-ghost h-7 px-2 text-2xs">
+                View all →
+              </Link>
+            </div>
+            {loading || !insights ? (
+              <div className="panel-body space-y-2">
+                {[...Array(3)].map((_, i) => (
+                  <div key={i} className="h-10 rounded bg-bg-subtle anim-fade" />
+                ))}
+              </div>
+            ) : insights.length === 0 ? (
+              <div className="panel-body text-sm text-fg-muted">
+                No insights generated yet.
+              </div>
+            ) : (
+              <ul className="divide-y divide-border-subtle">
+                {insights.slice(0, 4).map((item) => (
+                  <li key={item.id} className="px-5 py-3.5 space-y-1.5 hover:bg-bg-inset transition-colors">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={clsx(
+                        "badge text-[10px] font-mono tracking-wider uppercase px-1.5 py-0.5",
+                        item.severity === "CRITICAL" && "text-danger bg-danger-bg border-danger-border",
+                        item.severity === "WARNING" && "text-warning bg-warning-bg border-warning-border",
+                        item.severity === "INFO" && "text-info bg-info-bg border-info-border",
+                      )}>
+                        {item.severity}
+                      </span>
+                      <span className="text-2xs text-fg-subtle font-mono">
+                        {item.category}
+                      </span>
+                    </div>
+                    <div className="text-xs font-semibold text-fg leading-tight">
+                      {item.title}
+                    </div>
+                    <div className="text-2xs text-fg-muted line-clamp-2">
+                      {item.description}
+                    </div>
+                    <div className="flex justify-between items-center text-[10px] font-mono text-fg-subtle pt-0.5">
+                      <Link href={`/proposals/${item.proposal_id}`} className="hover:underline hover:text-fg">
+                        Proposal: {item.proposal_id.slice(0, 8)}…
+                      </Link>
+                    </div>
                   </li>
                 ))}
               </ul>

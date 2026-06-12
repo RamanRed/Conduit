@@ -331,6 +331,7 @@ async def ingest_file(
     )
     
     suggested_skills = parsed.get("suggested_skills_to_add", [])
+    enrichment_applied = parsed.get("enrichment_applied", [])
 
     # 10. Save proposal (STAGE 2: includes target_table)
     proposal = Proposal(
@@ -350,7 +351,8 @@ async def ingest_file(
         pii_columns_found=parsed["pii_columns_found"],
         llm_model_used=ai_resp["model_used"],
         description_md=description_md,
-        suggested_skills_to_add=suggested_skills
+        suggested_skills_to_add=suggested_skills,
+        enrichment_applied=enrichment_applied
     )
     db.add(proposal)
     await db.commit()
@@ -384,6 +386,7 @@ async def ingest_file(
         estimated_rows=len(df),
         llm_model_used=ai_resp["model_used"],
         description_md=description_md,
-        suggested_skills_to_add=suggested_skills
+        suggested_skills_to_add=suggested_skills,
+        enrichment_applied=enrichment_applied
     )
 

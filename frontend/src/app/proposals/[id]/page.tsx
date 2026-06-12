@@ -11,12 +11,14 @@ import {
   getProposalContext,
   listAuditForProposal,
   rejectProposal,
+  getInsightsForProposal,
 } from "@/lib/api";
 import type {
   AuditEntry,
   ExecutionResult,
   ProposalContextResponse,
   ProposalResponse,
+  InsightItem,
 } from "@/lib/types";
 import { PageHeader, SectionHeader } from "@/components/page-header";
 import { GatewayBadge, SeverityBadge } from "@/components/badges";
@@ -47,6 +49,19 @@ export default function ProposalDetailPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
+  const [proposalInsights, setProposalInsights] = useState<InsightItem[] | null>(null);
+
+  // Fetch insights if the proposal is already executed (has audit record) or after we just executed it (actionResult)
+  useEffect(() => {
+    if (!id) return;
+    if (audit || actionResult) {
+      getInsightsForProposal(id)
+        .then(setProposalInsights)
+        .catch(console.error);
+    } else {
+      setProposalInsights(null);
+    }
+  }, [id, audit, actionResult]);
 
   useEffect(() => {
     if (!id) return;
@@ -341,6 +356,61 @@ export default function ProposalDetailPage() {
               </div>
             </div>
           ) : null}
+
+          {proposalInsights && proposalInsights.length > 0 ? (
+            <div className="panel mt-6">
+              <div className="panel-header">
+                <div>
+                  <h3 className="text-sm font-semibold">Insights Discovered</h3>
+                  <p className="text-2xs text-fg-muted mt-0.5 font-sans">
+                    Surfaced patterns and data quality issues from this executed dataset
+                  </p>
+                </div>
+                <Link href="/insights" className="btn-ghost h-7 px-2 text-2xs">
+                  View all insights →
+                </Link>
+              </div>
+              <div className="panel-body space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {proposalInsights.map((item) => (
+                    <div key={item.id} className="card p-4 space-y-2 hover:border-fg-subtle transition-colors">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={clsx(
+                          "badge text-[10px] font-mono tracking-wider uppercase px-1.5 py-0.5",
+                          item.severity === "CRITICAL" && "text-danger bg-danger-bg border-danger-border",
+                          item.severity === "WARNING" && "text-warning bg-warning-bg border-warning-border",
+                          item.severity === "INFO" && "text-info bg-info-bg border-info-border",
+                        )}>
+                          {item.severity}
+                        </span>
+                        <span className="text-2xs text-fg-subtle font-mono">{item.category}</span>
+                      </div>
+                      <h4 className="text-sm font-semibold text-fg leading-snug">{item.title}</h4>
+                      <p className="text-xs text-fg-muted leading-relaxed">{item.description}</p>
+                      
+                      {item.evidence && Object.keys(item.evidence).length > 0 && (
+                        <details className="text-2xs font-mono pt-1 text-fg-subtle cursor-pointer select-none">
+                          <summary className="hover:text-fg font-sans font-medium mb-1">View Evidence Statistics</summary>
+                          <pre className="p-2 bg-bg-subtle border border-border-subtle rounded text-[10px] overflow-x-auto whitespace-pre-wrap">
+                            {JSON.stringify(item.evidence, null, 2)}
+                          </pre>
+                        </details>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : (audit || actionResult) ? (
+            <div className="panel mt-6">
+              <div className="panel-header">
+                <h3 className="text-sm font-semibold">Insights Discovered</h3>
+              </div>
+              <div className="panel-body text-xs text-fg-muted">
+                No insights were surfaced for this dataset.
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <div className="col-span-4 space-y-4">
@@ -405,6 +475,18 @@ export default function ProposalDetailPage() {
                 </dd>
               </div>
             </dl>
+            {proposal.enrichment_applied && proposal.enrichment_applied.length > 0 && (
+              <div className="pt-2.5 border-t border-border-subtle mt-2.5">
+                <div className="text-2xs font-medium uppercase tracking-wider text-fg-muted mb-1.5">Enrichment Applied</div>
+                <div className="flex flex-wrap gap-1">
+                  {proposal.enrichment_applied.map((rule, idx) => (
+                    <span key={idx} className="badge text-[10px] bg-bg-subtle border-border text-fg-muted px-1.5 py-0.5">
+                      {rule.replace(/_/g, " ")}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {proposal.suggested_skills_to_add && proposal.suggested_skills_to_add.length > 0 ? (
