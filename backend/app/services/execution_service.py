@@ -2,6 +2,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text, select
 import pandas as pd
 from datetime import datetime
+from fastapi import HTTPException
 from app.models import Proposal, PipelineSkillsLedger, QuarantineRecord, TableMetadata
 from app.schemas import ExecutionResult, InsightItem
 
@@ -39,6 +40,9 @@ async def execute_proposal(
     except Exception as e:
         proposal.status = "FAILED"
         await db.commit()
+        # After a failure, reset the proposal so it can be retried
+        proposal.status = "PENDING"
+        await db.commit()
         raise e
 
     import hashlib
@@ -47,6 +51,62 @@ async def execute_proposal(
         exec(generated_code, namespace)
         transform_fn = namespace["transform"]
         transformed_df = transform_fn(df)
+    except TypeError as e:
+        proposal.status = "FAILED"
+        stmt = select(TableMetadata).where(TableMetadata.table_name == target_table)
+        res = await db.execute(stmt)
+        tbl = res.scalars().first()
+        ledger_entry = PipelineSkillsLedger(
+            table_id=tbl.id if tbl else None,
+            proposal_id=proposal_id,
+            skill_name=f"transform_{filename}",
+            applied_by_llm_version=llm_model_used,
+            transformation_script_ref=generated_code,
+            human_approver_id=approver_id,
+            execution_status="FAILED"
+        )
+        db.add(ledger_entry)
+        await db.commit()
+        proposal.status = "PENDING"
+        await db.commit()
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"The AI-generated transformation code failed with a type error "
+                f"during execution: {e}. "
+                "This usually means the generated code applied a numeric or "
+                "statistical operation (e.g. quantile, mean, std) to a column "
+                "that contains string data. "
+                "Reject this proposal and re-ingest the file — the system will "
+                "generate a new transformation script."
+            )
+        )
+    except KeyError as e:
+        proposal.status = "FAILED"
+        stmt = select(TableMetadata).where(TableMetadata.table_name == target_table)
+        res = await db.execute(stmt)
+        tbl = res.scalars().first()
+        ledger_entry = PipelineSkillsLedger(
+            table_id=tbl.id if tbl else None,
+            proposal_id=proposal_id,
+            skill_name=f"transform_{filename}",
+            applied_by_llm_version=llm_model_used,
+            transformation_script_ref=generated_code,
+            human_approver_id=approver_id,
+            execution_status="FAILED"
+        )
+        db.add(ledger_entry)
+        await db.commit()
+        proposal.status = "PENDING"
+        await db.commit()
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"The AI-generated transformation code referenced a column that "
+                f"does not exist in the uploaded file: {e}. "
+                "Reject this proposal and re-ingest."
+            )
+        )
     except Exception as e:
         proposal.status = "FAILED"
         stmt = select(TableMetadata).where(TableMetadata.table_name == target_table)
@@ -63,7 +123,16 @@ async def execute_proposal(
         )
         db.add(ledger_entry)
         await db.commit()
-        raise e
+        proposal.status = "PENDING"
+        await db.commit()
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"The AI-generated transformation code failed during execution: "
+                f"{type(e).__name__}: {e}. "
+                "Reject this proposal and re-ingest the file."
+            )
+        )
 
     # Insert into database
     stmt = select(TableMetadata).where(TableMetadata.table_name == target_table)
@@ -127,6 +196,9 @@ async def execute_proposal(
             human_approver_id=approver_id,
             execution_status="ROLLEDBACK"
         ))
+        await db.commit()
+        # After a failure, reset the proposal so it can be retried
+        proposal.status = "PENDING"
         await db.commit()
         raise e
 

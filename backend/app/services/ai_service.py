@@ -73,6 +73,31 @@ Rules for generated_code:
 - Must add processed_at column: pd.Timestamp.now()
 - Return the transformed DataFrame
 
+TRANSFORMATION CODE RULES — MUST FOLLOW:
+
+The generated `transform` function MUST only use the following pandas operations:
+  - Column renaming:       df.rename(columns={...})
+  - Column dropping:       df.drop(columns=[...])
+  - Null filling:          df[col].fillna(value)
+  - Type casting:          df[col].astype(dtype)
+  - String normalization:  df[col].str.strip(), df[col].str.lower()
+  - Date parsing:          pd.to_datetime(df[col])
+  - Value replacement:     df[col].replace({...})
+  - Constant assignment:   df[col] = value
+  - Conditional mapping:   df[col].map({...}) or np.where(...)
+
+The generated `transform` function MUST NEVER use:
+  - Any aggregation or statistical method: quantile(), mean(), median(), 
+    std(), var(), describe(), corr(), cov(), skew(), kurt(), rank()
+  - Any grouping operation: groupby(), resample(), pivot_table(), crosstab()
+  - Any join/merge operation: merge(), join(), concat()
+  - Any operation that changes the number of rows
+  - Any operation that requires numeric dtype on a column that has not been 
+    explicitly cast to numeric first
+
+The output DataFrame MUST have exactly the same number of rows as the input.
+The function signature MUST be: def transform(df: pd.DataFrame) -> pd.DataFrame
+
 Rules for generated_code (ENRICHMENT):
 - If numeric columns exist, add an `amount_tier` derived column classifying values as 'low' (< 25th pct), 'medium', and 'high' (> 75th pct).
 - Flag potential duplicate rows by adding a `is_potential_duplicate` boolean column (True if all non-ID columns match another row).
@@ -129,6 +154,8 @@ SAMPLE ROWS (first 5):
 TABLE BUSINESS CONTEXT:
 {json.dumps(table_metadata, indent=2)}
 {context_section}
+Remember: only column mapping, renaming, type casting, null filling, and 
+string normalization. No statistical operations. No aggregations. No joins.
 Analyze the drift and generate the transformation plan."""
 
     if retry_msg:
@@ -137,21 +164,16 @@ Analyze the drift and generate the transformation plan."""
     if settings.MOCK_AI:
         # Check incoming schema to determine test case
         cols = list(incoming_schema.keys())
-        if "order_amount" in cols:
-            # SCHEMA_EVOLUTION mock
+        if "amount_usd" in cols and "customer_email" not in cols:
+            # CONFLICT mock
             generated_code = (
                 "def transform(df: pd.DataFrame) -> pd.DataFrame:\n"
-                "    import hashlib\n"
-                "    df = df.rename(columns={\"order_amount\": \"amount_usd\"})\n"
-                "    if \"discount_code\" in df.columns:\n"
-                "        df = df.drop(columns=[\"discount_code\"])\n"
-                "    df[\"order_status\"] = df[\"order_status\"].fillna(\"completed\")\n"
-                "    df[\"customer_email\"] = df[\"customer_email\"].apply(lambda x: hashlib.sha256(str(x).encode()).hexdigest() if pd.notnull(x) else x)\n"
-                "    df[\"amount_usd\"] = df[\"amount_usd\"].astype(str).str.replace(\",\", \"\").astype(float)\n"
-                "    q25 = df[\"amount_usd\"].quantile(0.25)\n"
-                "    q75 = df[\"amount_usd\"].quantile(0.75)\n"
+                "    # Attempt basic enrichment\n"
+                "    df[\"amount_usd\"] = pd.to_numeric(df[\"amount_usd\"], errors='coerce')\n"
+                "    q25 = float(df[\"amount_usd\"].quantile(0.25))\n"
+                "    q75 = float(df[\"amount_usd\"].quantile(0.75))\n"
                 "    df[\"amount_tier\"] = pd.cut(df[\"amount_usd\"], bins=[-float('inf'), q25, q75, float('inf')], labels=[\"low\", \"medium\", \"high\"]).astype(str)\n"
-                "    iqr = q75 - q25\n"
+                "    iqr = float(q75 - q25)\n"
                 "    df[\"amount_outlier\"] = (df[\"amount_usd\"] < q25 - 1.5 * iqr) | (df[\"amount_usd\"] > q75 + 1.5 * iqr)\n"
                 "    dup_cols = [c for c in df.columns if c != \"order_id\" and c not in [\"processed_at\", \"amount_tier\", \"amount_outlier\"]]\n"
                 "    df[\"is_potential_duplicate\"] = df.duplicated(subset=dup_cols, keep=False)\n"
@@ -191,7 +213,7 @@ Analyze the drift and generate the transformation plan."""
                 "    q75 = df[\"amount_usd\"].quantile(0.75)\n"
                 "    df[\"amount_tier\"] = pd.cut(df[\"amount_usd\"], bins=[-float('inf'), q25, q75, float('inf')], labels=[\"low\", \"medium\", \"high\"]).astype(str)\n"
                 "    iqr = q75 - q25\n"
-                "    df[\"amount_outlier\"] = (df[\"amount_usd\"] < q25 - 1.5 * iqr) | (df[\"amount_usd\"] > q75 + 1.5 * iqr)\n"
+                "    df[\"amount_outlier\"] = (df[\"amount_usd\"] < (q25 - 1.5 * iqr)) | (df[\"amount_usd\"] > (q75 + 1.5 * iqr))\n"
                 "    dup_cols = [c for c in df.columns if c != \"order_id\" and c not in [\"processed_at\", \"amount_tier\", \"amount_outlier\"]]\n"
                 "    df[\"is_potential_duplicate\"] = df.duplicated(subset=dup_cols, keep=False)\n"
                 "    df[\"processed_at\"] = pd.Timestamp.now()\n"
@@ -218,13 +240,13 @@ Analyze the drift and generate the transformation plan."""
             generated_code = (
                 "def transform(df: pd.DataFrame) -> pd.DataFrame:\n"
                 "    import hashlib\n"
-                "    df[\"customer_email\"] = df[\"customer_email\"].apply(lambda x: hashlib.sha256(str(x).encode()).hexdigest() if pd.notnull(x) else x)\n"
+                "    df[\"customer_email\"] = df[\"customer_email\"].apply(lambda x: hashlib.sha256(x.encode()).hexdigest())\n"
                 "    df[\"amount_usd\"] = df[\"amount_usd\"].astype(float)\n"
-                "    q25 = df[\"amount_usd\"].quantile(0.25)\n"
-                "    q75 = df[\"amount_usd\"].quantile(0.75)\n"
+                "    q25 = float(df[\"amount_usd\"].quantile(0.25))\n"
+                "    q75 = float(df[\"amount_usd\"].quantile(0.75))\n"
                 "    df[\"amount_tier\"] = pd.cut(df[\"amount_usd\"], bins=[-float('inf'), q25, q75, float('inf')], labels=[\"low\", \"medium\", \"high\"]).astype(str)\n"
-                "    iqr = q75 - q25\n"
-                "    df[\"amount_outlier\"] = (df[\"amount_usd\"] < q25 - 1.5 * iqr) | (df[\"amount_usd\"] > q75 + 1.5 * iqr)\n"
+                "    iqr = float(q75 - q25)\n"
+                "    df[\"amount_outlier\"] = (df[\"amount_usd\"] < (q25 - 1.5 * iqr)) | (df[\"amount_usd\"] > (q75 + 1.5 * iqr))\n"
                 "    dup_cols = [c for c in df.columns if c != \"order_id\" and c not in [\"processed_at\", \"amount_tier\", \"amount_outlier\"]]\n"
                 "    df[\"is_potential_duplicate\"] = df.duplicated(subset=dup_cols, keep=False)\n"
                 "    df[\"processed_at\"] = pd.Timestamp.now()\n"

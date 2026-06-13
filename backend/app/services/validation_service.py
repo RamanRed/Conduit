@@ -1,6 +1,39 @@
 import magic
 import ast
 
+FORBIDDEN_METHODS = {
+    "quantile",
+    "describe",
+    "corr",
+    "cov",
+    "kurt",
+    "kurtosis",
+    "skew",
+    "sem",
+    "var",
+    "std",
+    "mean",
+    "median",
+    "mode",
+    "pct_change",
+    "diff",
+    "rank",
+    "rolling",
+    "ewm",
+    "expanding",
+    "groupby",
+    "resample",
+    "pivot_table",
+    "crosstab",
+    "melt",
+    "wide_to_long",
+    "merge",
+    "join",
+    "concat",
+    "eval",
+    "query",
+}
+
 def validate_magic_bytes(file_bytes: bytes, declared_extension: str) -> tuple[bool, str]:
     if len(file_bytes) == 0:
         return False, "File is empty"
@@ -35,5 +68,17 @@ def validate_generated_code(code_string: str) -> tuple[bool, str]:
     for term in unsafe_terms:
         if term in code_string:
             return False, "unsafe code detected"
+
+    tree = ast.parse(code_string)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute):
+            if node.attr in FORBIDDEN_METHODS:
+                return False, (
+                    f"Generated code uses forbidden method '.{node.attr}()'. "
+                    "Statistical and aggregation operations are not permitted "
+                    "in schema transformation scripts. Only column mapping, "
+                    "renaming, type casting, null filling, and string "
+                    "normalization are allowed."
+                )
 
     return True, ""
