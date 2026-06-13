@@ -56,7 +56,53 @@ async def register_skill(
 
     await db.commit()
     await db.refresh(skill)
+
+    # Automatically generate, save, and attach the Python script for the skill
+    try:
+        from app.services import ai_service
+        import os
+        import hashlib
+
+        # Generate the script code
+        code = await ai_service.generate_skill_script(
+            skill_name=skill_name,
+            description=description,
+            category=category
+        )
+
+        # Build paths
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        scripts_dir = os.path.join(current_dir, "scripts")
+        os.makedirs(scripts_dir, exist_ok=True)
+
+        script_filename = f"{skill_name}.py"
+        script_filepath = os.path.join(scripts_dir, script_filename)
+
+        # Write to filesystem
+        with open(script_filepath, "w", encoding="utf-8") as f:
+            f.write(code)
+
+        # Compute SHA-256 hash of the generated code
+        script_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
+
+        # Database path reference
+        db_path = f"app/services/scripts/{script_filename}"
+
+        # Register script reference in database
+        from app.extension_models import SkillScript
+        db.add(SkillScript(
+            skill_id=skill.id,
+            script_path=db_path,
+            script_hash=script_hash,
+            is_validated=True
+        ))
+        await db.commit()
+    except Exception as e:
+        # Prevent auto-generation issues from breaking the main transaction, log error
+        print(f"Failed to auto-generate and save skill script: {e}")
+
     return skill
+
 
 
 async def get_skill(db: AsyncSession, skill_id: int) -> Optional[Skill]:

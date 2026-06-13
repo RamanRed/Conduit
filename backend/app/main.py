@@ -9,6 +9,7 @@ from app.extension_models import ExtBase  # NEW — extension model base
 
 from app.routers import ingest, proposals, audit, quarantine, sources
 from app.routers import skills, graph, lineage  # NEW — extension routers
+from app.routers import insights  # NEW — insight engine router
 
 logger = logging.getLogger("conduit.api")
 logger.setLevel(logging.INFO)
@@ -52,6 +53,7 @@ app.include_router(sources.router, prefix="/api")
 app.include_router(skills.router, prefix="/api")
 app.include_router(graph.router, prefix="/api")
 app.include_router(lineage.router, prefix="/api")
+app.include_router(insights.router, prefix="/api")  # NEW — insight engine
 
 
 @app.on_event("startup")
@@ -61,8 +63,15 @@ async def on_startup():
         # Existing schema (UNCHANGED)
         await conn.execute(text("CREATE SCHEMA IF NOT EXISTS conduit"))
         await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(text("ALTER TABLE conduit.proposals ADD COLUMN IF NOT EXISTS description_md TEXT"))
+        await conn.execute(text("ALTER TABLE conduit.proposals ADD COLUMN IF NOT EXISTS suggested_skills_to_add JSONB"))
+        await conn.execute(text("ALTER TABLE conduit.proposals ADD COLUMN IF NOT EXISTS enrichment_applied JSONB"))
+        await conn.execute(text("ALTER TABLE public.orders_clean ADD COLUMN IF NOT EXISTS amount_tier VARCHAR(20)"))
+        await conn.execute(text("ALTER TABLE public.orders_clean ADD COLUMN IF NOT EXISTS amount_outlier BOOLEAN"))
+        await conn.execute(text("ALTER TABLE public.orders_clean ADD COLUMN IF NOT EXISTS is_potential_duplicate BOOLEAN"))
 
         # NEW — extension schemas (purely additive)
+
         await conn.execute(text("CREATE SCHEMA IF NOT EXISTS conduit_skills"))
         await conn.execute(text("CREATE SCHEMA IF NOT EXISTS conduit_graph"))
         await conn.execute(text("CREATE SCHEMA IF NOT EXISTS conduit_lineage"))

@@ -6,7 +6,7 @@ import pandas as pd
 import json
 
 from app.database import get_db
-from app.services import validation_service, mcp_service, ai_service, gateway_service
+from app.services import validation_service, mcp_service, ai_service, gateway_service, suggest_service
 from app.services import context_retrieval_service  # Phase 1 & 2 — build & store context bundle
 from app.models import Proposal
 from app.schemas import ProposalResponse, DriftItem
@@ -28,10 +28,61 @@ ProposalResponse.model_rebuild(force=True)
 
 router = APIRouter()
 
+@router.post("/suggest-target")
+async def suggest_target_table(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db)
+):
+    file_bytes = await file.read()
+    
+    # Validate magic bytes
+    ext = ""
+    if file.filename:
+        ext = "." + file.filename.split(".")[-1]
+    is_valid, reason = validation_service.validate_magic_bytes(file_bytes, ext)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=reason)
+        
+    # Save file temporarily
+    file_id = str(uuid.uuid4())
+    import os
+    try:
+        os.makedirs("/tmp", exist_ok=True)
+    except Exception:
+        pass
+    tmp_path = f"/tmp/{file_id}_{file.filename}"
+    try:
+        async with aiofiles.open(tmp_path, 'wb') as f:
+            await f.write(file_bytes)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save uploaded file: {str(e)}")
+        
+    try:
+        if ext.lower() == ".json":
+            df = pd.read_json(tmp_path)
+        else:
+            df = pd.read_csv(tmp_path)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid file format: {str(e)}")
+    finally:
+        # Clean up temp file
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
+            
+    try:
+        suggestions = await suggest_service.suggest_target_table(df, db)
+        return suggestions
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to generate table suggestions: {str(e)}")
+
 @router.post("/ingest", response_model=ProposalResponse)
 async def ingest_file(
     file: UploadFile = File(...),
     target_table: str = Form(...),
+    description_md: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db)
 ):
     file_bytes = await file.read()
@@ -112,10 +163,31 @@ async def ingest_file(
             target_table=target_table,
             estimated_rows=len(df),
             pii_columns_found=[],
-            llm_model_used="none"
+            llm_model_used="none",
+            description_md=description_md,
+            suggested_skills_to_add=[]
         )
         db.add(proposal)
         await db.commit()
+
+        # Store an empty context bundle so GET /proposals/{id}/context returns successfully
+        try:
+            empty_bundle = {
+                "target_table": target_table,
+                "related_entities": [],
+                "related_skills": [],
+                "dependencies": [],
+                "business_context": [],
+                "pii_columns": []
+            }
+            await context_retrieval_service.store_proposal_context(
+                db=db,
+                proposal_id=file_id,
+                target_table=target_table,
+                bundle=empty_bundle
+            )
+        except Exception:
+            pass
         
         drift_items = [DriftItem(**item) for item in drift_detected]
         
@@ -130,7 +202,9 @@ async def ingest_file(
             confidence_score=0.0,
             pii_columns_found=[],
             estimated_rows=len(df),
-            llm_model_used="none"
+            llm_model_used="none",
+            description_md=description_md,
+            suggested_skills_to_add=[]
         )
     
     # Get table metadata
@@ -160,6 +234,7 @@ async def ingest_file(
         ai_resp = await ai_service.generate_pipeline_proposal(
             incoming_schema, target_schema, sample_rows, table_metadata,
             context_bundle=context_bundle,
+            description_md=description_md,
         )
         parsed = ai_resp["parsed"]
         generated_code = parsed["generated_code"]
@@ -171,7 +246,8 @@ async def ingest_file(
             ai_resp = await ai_service.generate_pipeline_proposal(
                 incoming_schema, target_schema, sample_rows, table_metadata,
                 context_bundle=context_bundle,
-                retry_msg=f"Code validation failed: {code_reason}. Provide fixed code."
+                retry_msg=f"Code validation failed: {code_reason}. Provide fixed code.",
+                description_md=description_md,
             )
             parsed = ai_resp["parsed"]
             generated_code = parsed["generated_code"]
@@ -213,7 +289,9 @@ async def ingest_file(
                 target_table=target_table,
                 estimated_rows=len(df),
                 pii_columns_found=cached_proposal.pii_columns_found,
-                llm_model_used="cached-fallback"
+                llm_model_used="cached-fallback",
+                description_md=description_md,
+                suggested_skills_to_add=[]
             )
             proposal.reasoning = reasoning_note
             proposal.reasoning_note = reasoning_note
@@ -235,7 +313,9 @@ async def ingest_file(
                 estimated_rows=len(df),
                 llm_model_used="cached-fallback",
                 reasoning=reasoning_note,
-                reasoning_note=reasoning_note
+                reasoning_note=reasoning_note,
+                description_md=description_md,
+                suggested_skills_to_add=[]
             )
         else:
             if isinstance(e, HTTPException):
@@ -250,6 +330,9 @@ async def ingest_file(
         parsed["confidence_score"]
     )
     
+    suggested_skills = parsed.get("suggested_skills_to_add", [])
+    enrichment_applied = parsed.get("enrichment_applied", [])
+
     # 10. Save proposal (STAGE 2: includes target_table)
     proposal = Proposal(
         id=file_id,
@@ -266,7 +349,10 @@ async def ingest_file(
         target_table=target_table,
         estimated_rows=len(df),
         pii_columns_found=parsed["pii_columns_found"],
-        llm_model_used=ai_resp["model_used"]
+        llm_model_used=ai_resp["model_used"],
+        description_md=description_md,
+        suggested_skills_to_add=suggested_skills,
+        enrichment_applied=enrichment_applied
     )
     db.add(proposal)
     await db.commit()
@@ -298,5 +384,9 @@ async def ingest_file(
         confidence_score=parsed["confidence_score"],
         pii_columns_found=parsed["pii_columns_found"],
         estimated_rows=len(df),
-        llm_model_used=ai_resp["model_used"]
+        llm_model_used=ai_resp["model_used"],
+        description_md=description_md,
+        suggested_skills_to_add=suggested_skills,
+        enrichment_applied=enrichment_applied
     )
+

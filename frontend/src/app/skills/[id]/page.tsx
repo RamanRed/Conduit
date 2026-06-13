@@ -182,55 +182,75 @@ export default function SkillDetailPage() {
               </span>
             </div>
             {scripts.length > 0 ? (
-              <table className="table-base">
-                <thead>
-                  <tr>
-                    <th>Path</th>
-                    <th>Hash</th>
-                    <th>Validated</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {scripts.map((s, i) => {
-                    const path = (s.script_path as string | null) ?? "—";
-                    const hash = (s.script_hash as string | null) ?? null;
-                    const validated = Boolean(s.is_validated);
-                    return (
-                      <tr key={i}>
-                        <td className="font-mono text-xs truncate max-w-md">
-                          {path}
-                        </td>
-                        <td className="font-mono text-2xs text-fg-muted">
-                          {shortHash(hash)}
-                        </td>
-                        <td>
-                          <span
-                            className={clsx(
-                              "badge uppercase tracking-wider",
-                              validated
-                                ? "text-success bg-success-bg border-success-border"
-                                : "text-warning bg-warning-bg border-warning-border",
-                            )}
-                          >
+              <div className="space-y-4">
+                <table className="table-base">
+                  <thead>
+                    <tr>
+                      <th>Path</th>
+                      <th>Hash</th>
+                      <th>Validated</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scripts.map((s, i) => {
+                      const path = (s.script_path as string | null) ?? "—";
+                      const hash = (s.script_hash as string | null) ?? null;
+                      const validated = Boolean(s.is_validated);
+                      return (
+                        <tr key={i}>
+                          <td className="font-mono text-xs truncate max-w-md">
+                            {path}
+                          </td>
+                          <td className="font-mono text-2xs text-fg-muted">
+                            {shortHash(hash)}
+                          </td>
+                          <td>
                             <span
                               className={clsx(
-                                "w-1.5 h-1.5 rounded-full",
-                                validated ? "bg-success" : "bg-warning",
+                                "badge uppercase tracking-wider",
+                                validated
+                                  ? "text-success bg-success-bg border-success-border"
+                                  : "text-warning bg-warning-bg border-warning-border",
                               )}
-                            />
-                            {validated ? "Yes" : "Pending"}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                            >
+                              <span
+                                className={clsx(
+                                  "w-1.5 h-1.5 rounded-full",
+                                  validated ? "bg-success" : "bg-warning",
+                                )}
+                              />
+                              {validated ? "Yes" : "Pending"}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                {scripts.map((s, i) =>
+                  s.code ? (
+                    <div key={i} className="p-4 border-t border-border-subtle bg-bg-subtle/30 space-y-2 anim-in">
+                      <div className="flex items-center justify-between">
+                        <div className="text-2xs font-mono text-fg-muted">
+                          Code for {s.script_path as string}
+                        </div>
+                        <CopyButton value={s.code as string} />
+                      </div>
+                      <CodeBlock
+                        code={s.code as string}
+                        language="python"
+                        maxHeight="max-h-96"
+                      />
+                    </div>
+                  ) : null
+                )}
+              </div>
             ) : (
               <div className="panel-body text-sm text-fg-muted">
                 No scripts attached yet.
               </div>
             )}
+
           </div>
 
           <div className="panel">

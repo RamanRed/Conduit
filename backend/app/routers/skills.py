@@ -68,6 +68,25 @@ async def search_skills(
 
 # ── Single skill detail ───────────────────────────────────────────────────────
 
+def read_script_code(script_path: str) -> Optional[str]:
+    """Helper to locate and read the script file content from disk."""
+    import os
+    if not script_path:
+        return None
+    # Current file is backend/app/routers/skills.py.
+    # We want backend/ as root, and script_path is e.g. 'app/services/scripts/name.py'
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    backend_root = os.path.dirname(os.path.dirname(current_dir))
+    full_path = os.path.join(backend_root, script_path)
+    if os.path.exists(full_path):
+        try:
+            with open(full_path, "r", encoding="utf-8") as f:
+                return f.read()
+        except Exception:
+            pass
+    return None
+
+
 @router.get("/skills/{skill_id}", response_model=SkillDetailResponse)
 async def get_skill(skill_id: int, db: AsyncSession = Depends(get_db)):
     """Get a skill with all its scripts, examples, and issue references."""
@@ -93,9 +112,11 @@ async def get_skill(skill_id: int, db: AsyncSession = Depends(get_db)):
                 "script_path": s.script_path,
                 "script_hash": s.script_hash,
                 "is_validated": s.is_validated,
+                "code": read_script_code(s.script_path),
             }
             for s in data["scripts"]
         ],
+
         examples=[
             {
                 "id": e.id,

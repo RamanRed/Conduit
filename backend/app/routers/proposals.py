@@ -40,7 +40,9 @@ async def list_proposals(
                 confidence_score=p.confidence_score or 0.0,
                 pii_columns_found=p.pii_columns_found or [],
                 estimated_rows=p.estimated_rows or 0,
-                llm_model_used=p.llm_model_used or "llama-3.3-70b-versatile"
+                llm_model_used=p.llm_model_used or "llama-3.3-70b-versatile",
+                description_md=p.description_md,
+                suggested_skills_to_add=p.suggested_skills_to_add
             )
         )
     return results
@@ -65,8 +67,11 @@ async def get_proposal(proposal_id: str, db: AsyncSession = Depends(get_db)):
         confidence_score=proposal.confidence_score,
         pii_columns_found=proposal.pii_columns_found or [],
         estimated_rows=proposal.estimated_rows or 0,
-        llm_model_used=proposal.llm_model_used or "llama-3.3-70b-versatile"
+        llm_model_used=proposal.llm_model_used or "llama-3.3-70b-versatile",
+        description_md=proposal.description_md,
+        suggested_skills_to_add=proposal.suggested_skills_to_add
     )
+
 
 @router.post("/proposals/{proposal_id}/approve", response_model=ExecutionResult)
 async def approve_proposal(proposal_id: str, req: ApproveRequest, db: AsyncSession = Depends(get_db)):

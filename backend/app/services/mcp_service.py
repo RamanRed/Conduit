@@ -119,3 +119,34 @@ async def get_data_distribution(table_name: str, db: AsyncSession) -> dict:
         }
     except Exception:
         return {}
+
+
+async def get_all_table_schemas(db: AsyncSession) -> list[dict]:
+    stmt = select(TableMetadata)
+    result = await db.execute(stmt)
+    tables = result.scalars().all()
+    
+    out = []
+    for table in tables:
+        stmt_attrs = select(AttributeMetadata).where(AttributeMetadata.table_id == table.id)
+        result_attrs = await db.execute(stmt_attrs)
+        attrs = result_attrs.scalars().all()
+        
+        columns = []
+        for attr in attrs:
+            columns.append({
+                "column_name": attr.column_name,
+                "data_type": attr.data_type,
+                "semantic_description": attr.semantic_description,
+                "is_required": attr.is_required,
+                "is_pii": attr.is_pii,
+                "sample_values": attr.sample_values
+            })
+            
+        out.append({
+            "table_name": table.table_name,
+            "semantic_description": table.semantic_description,
+            "columns": columns
+        })
+    return out
+
