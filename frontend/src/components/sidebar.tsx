@@ -84,11 +84,11 @@ export function Sidebar() {
 
       <div className="border-t border-border-subtle p-3">
         <div className="flex items-center gap-2 text-xs text-fg-muted">
-          <span className="w-1.5 h-1.5 rounded-full bg-success" />
-          <span>API connected</span>
+          <span className="w-1.5 h-1.5 rounded-full bg-warning" />
+          <span>Demo mode</span>
         </div>
         <div className="mt-1 text-2xs text-fg-subtle font-mono">
-          localhost:8000
+          mock data · no backend
         </div>
       </div>
     </aside>

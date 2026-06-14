@@ -22,62 +22,48 @@ import type {
   InsightItem,
 } from "./types";
 
-const API_BASE = "/api";
+import {
+  MOCK_PROPOSALS,
+  MOCK_AUDIT,
+  MOCK_QUARANTINE,
+  MOCK_SOURCES,
+  MOCK_SKILLS,
+  MOCK_SKILL_DETAILS,
+  MOCK_GRAPH_NODES,
+  MOCK_GRAPH_EDGES,
+  MOCK_LINEAGE,
+  MOCK_INSIGHTS,
+  MOCK_CONTEXTS,
+  MOCK_SUGGEST_TARGET,
+  MOCK_EXECUTION_RESULT,
+  MOCK_INSIGHTS_SUMMARY,
+} from "./mockData";
 
-async function handle<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    let detail: unknown;
-    const clone = res.clone();
-    try {
-      detail = await res.json();
-    } catch {
-      try {
-        detail = await clone.text();
-      } catch {
-        detail = "Could not parse error response body";
-      }
-    }
-    const err = new Error(
-      `API ${res.status}: ${typeof detail === "string" ? detail : JSON.stringify(detail)}`,
-    );
-    (err as Error & { status?: number; detail?: unknown }).status = res.status;
-    (err as Error & { status?: number; detail?: unknown }).detail = detail;
-    throw err;
-  }
-  return res.json() as Promise<T>;
+/* ─── Helpers ──────────────────────────────────────────────── */
+
+/** Simulate network latency */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /* ─── Core ingest / proposals / execution ─────────────────── */
 
 export async function ingestFile(
-  file: File,
-  targetTable: string,
-  descriptionMd?: string,
+  _file: File,
+  _targetTable: string,
+  _descriptionMd?: string,
 ): Promise<ProposalResponse> {
-  const form = new FormData();
-  form.append("file", file);
-  form.append("target_table", targetTable);
-  if (descriptionMd) {
-    form.append("description_md", descriptionMd);
-  }
-  const res = await fetch(`${API_BASE}/ingest`, {
-    method: "POST",
-    body: form,
-  });
-  return handle<ProposalResponse>(res);
+  // Simulate LLM processing time
+  await delay(3000);
+  // Return the SCHEMA_EVOLUTION proposal for the most interesting demo
+  return { ...MOCK_PROPOSALS[1] };
 }
 
-
 export async function suggestTargetTable(
-  file: File,
+  _file: File,
 ): Promise<SuggestTargetResponse> {
-  const form = new FormData();
-  form.append("file", file);
-  const res = await fetch(`${API_BASE}/suggest-target`, {
-    method: "POST",
-    body: form,
-  });
-  return handle<SuggestTargetResponse>(res);
+  await delay(1500);
+  return { ...MOCK_SUGGEST_TARGET };
 }
 
 export async function listProposals(params?: {
@@ -85,54 +71,68 @@ export async function listProposals(params?: {
   offset?: number;
   status?: string;
 }): Promise<ProposalResponse[]> {
-  const q = new URLSearchParams();
-  if (params?.limit !== undefined) q.set("limit", String(params.limit));
-  if (params?.offset !== undefined) q.set("offset", String(params.offset));
-  if (params?.status) q.set("status", params.status);
-  const qs = q.toString();
-  return handle<ProposalResponse[]>(
-    await fetch(`${API_BASE}/proposals${qs ? `?${qs}` : ""}`),
-  );
+  await delay(200);
+  let result = [...MOCK_PROPOSALS];
+  if (params?.status) {
+    result = result.filter((p) => p.gateway_status === params.status);
+  }
+  const offset = params?.offset ?? 0;
+  const limit = params?.limit ?? 50;
+  return result.slice(offset, offset + limit);
 }
 
 export async function getProposal(id: string): Promise<ProposalResponse> {
-  return handle<ProposalResponse>(
-    await fetch(`${API_BASE}/proposals/${id}`),
-  );
+  await delay(150);
+  const found = MOCK_PROPOSALS.find((p) => p.proposal_id === id);
+  if (!found) {
+    throw new Error(`Proposal ${id} not found`);
+  }
+  return { ...found };
 }
 
 export async function getProposalContext(
   id: string,
 ): Promise<ProposalContextResponse> {
-  return handle<ProposalContextResponse>(
-    await fetch(`${API_BASE}/proposals/${id}/context`),
-  );
+  await delay(200);
+  const found = MOCK_CONTEXTS[id];
+  if (found) return { ...found };
+  // Fallback: return a generic context
+  return {
+    proposal_id: id,
+    target_table: "orders_clean",
+    context_bundle: {
+      related_skills: [
+        { skill_name: "pii_masking", relevance: "HIGH", reason: "PII detected" },
+      ],
+      related_entities: [
+        { entity: "orders_clean", type: "TABLE", relationship: "target" },
+      ],
+      pii_columns: ["customer_email"],
+      business_context: "Core transactional data from the e-commerce platform.",
+      dependencies: [],
+    },
+    generated_at: new Date().toISOString(),
+  };
 }
 
 export async function approveProposal(
   id: string,
-  body: ApproveRequest,
+  _body: ApproveRequest,
 ): Promise<ExecutionResult> {
-  return handle<ExecutionResult>(
-    await fetch(`${API_BASE}/proposals/${id}/approve`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }),
-  );
+  await delay(1200);
+  return {
+    ...MOCK_EXECUTION_RESULT,
+    proposal_id: id,
+    insights: MOCK_EXECUTION_RESULT.insights?.map((i) => ({ ...i, proposal_id: id })) ?? null,
+  };
 }
 
 export async function rejectProposal(
-  id: string,
-  body: RejectRequest,
+  _id: string,
+  _body: RejectRequest,
 ): Promise<{ status: string }> {
-  return handle<{ status: string }>(
-    await fetch(`${API_BASE}/proposals/${id}/reject`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }),
-  );
+  await delay(500);
+  return { status: "REJECTED" };
 }
 
 /* ─── Audit / Quarantine / Sources ─────────────────────────── */
@@ -141,41 +141,41 @@ export async function listAudit(
   limit = 50,
   offset = 0,
 ): Promise<AuditEntry[]> {
-  return handle<AuditEntry[]>(
-    await fetch(`${API_BASE}/audit?limit=${limit}&offset=${offset}`),
-  );
+  await delay(150);
+  return MOCK_AUDIT.slice(offset, offset + limit);
 }
 
 export async function listAuditForProposal(
   proposalId: string,
 ): Promise<AuditEntry[]> {
-  return handle<AuditEntry[]>(
-    await fetch(
-      `${API_BASE}/audit?proposal_id=${encodeURIComponent(proposalId)}`,
-    ),
-  );
+  await delay(150);
+  return MOCK_AUDIT.filter((a) => a.proposal_id === proposalId);
 }
 
 export async function getAuditEntry(id: number): Promise<AuditEntry> {
-  return handle<AuditEntry>(await fetch(`${API_BASE}/audit/${id}`));
+  await delay(150);
+  const found = MOCK_AUDIT.find((a) => a.id === id);
+  if (!found) {
+    throw new Error(`Audit entry ${id} not found`);
+  }
+  return { ...found };
 }
 
 export async function listQuarantine(): Promise<QuarantineEntry[]> {
-  return handle<QuarantineEntry[]>(
-    await fetch(`${API_BASE}/quarantine`),
-  );
+  await delay(150);
+  return [...MOCK_QUARANTINE];
 }
 
 export async function getQuarantineForProposal(
   proposalId: string,
 ): Promise<QuarantineEntry[]> {
-  return handle<QuarantineEntry[]>(
-    await fetch(`${API_BASE}/quarantine/${proposalId}`),
-  );
+  await delay(150);
+  return MOCK_QUARANTINE.filter((q) => q.proposal_id === proposalId);
 }
 
 export async function listSources(): Promise<WarehouseUnitResponse[]> {
-  return handle<WarehouseUnitResponse[]>(await fetch(`${API_BASE}/sources`));
+  await delay(100);
+  return [...MOCK_SOURCES];
 }
 
 /* ─── Skills ───────────────────────────────────────────────── */
@@ -186,39 +186,55 @@ export async function listSkills(params?: {
   limit?: number;
   offset?: number;
 }): Promise<SkillResponse[]> {
-  const q = new URLSearchParams();
-  if (params?.category) q.set("category", params.category);
-  if (params?.status) q.set("status", params.status);
-  if (params?.limit !== undefined) q.set("limit", String(params.limit));
-  if (params?.offset !== undefined) q.set("offset", String(params.offset));
-  const qs = q.toString();
-  return handle<SkillResponse[]>(
-    await fetch(`${API_BASE}/skills${qs ? `?${qs}` : ""}`),
-  );
+  await delay(150);
+  let result = [...MOCK_SKILLS];
+  if (params?.category) {
+    result = result.filter((s) => s.category === params.category);
+  }
+  if (params?.status) {
+    result = result.filter((s) => s.status === params.status);
+  }
+  const offset = params?.offset ?? 0;
+  const limit = params?.limit ?? 50;
+  return result.slice(offset, offset + limit);
 }
 
 export async function searchSkills(q: string): Promise<SkillResponse[]> {
-  return handle<SkillResponse[]>(
-    await fetch(`${API_BASE}/skills/search?q=${encodeURIComponent(q)}`),
+  await delay(200);
+  const lower = q.toLowerCase();
+  return MOCK_SKILLS.filter(
+    (s) =>
+      s.skill_name.toLowerCase().includes(lower) ||
+      s.description.toLowerCase().includes(lower) ||
+      (s.use_cases && s.use_cases.toLowerCase().includes(lower)),
   );
 }
 
 export async function getSkill(id: number): Promise<SkillDetailResponse> {
-  return handle<SkillDetailResponse>(
-    await fetch(`${API_BASE}/skills/${id}`),
-  );
+  await delay(150);
+  const found = MOCK_SKILL_DETAILS[id];
+  if (!found) {
+    throw new Error(`Skill ${id} not found`);
+  }
+  return { ...found };
 }
 
 export async function createSkill(
   body: CreateSkillRequest,
 ): Promise<SkillResponse> {
-  return handle<SkillResponse>(
-    await fetch(`${API_BASE}/skills`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }),
-  );
+  await delay(500);
+  return {
+    id: MOCK_SKILLS.length + 1,
+    skill_name: body.skill_name,
+    version: body.version ?? "1.0.0",
+    category: body.category,
+    description: body.description,
+    use_cases: body.use_cases ?? null,
+    constraints: body.constraints ?? null,
+    owner: body.owner ?? null,
+    status: body.status ?? "DRAFT",
+    created_at: new Date().toISOString(),
+  };
 }
 
 /* ─── Graph ────────────────────────────────────────────────── */
@@ -228,14 +244,14 @@ export async function listGraphNodes(params?: {
   limit?: number;
   offset?: number;
 }): Promise<GraphNodeResponse[]> {
-  const q = new URLSearchParams();
-  if (params?.node_type) q.set("node_type", params.node_type);
-  if (params?.limit !== undefined) q.set("limit", String(params.limit));
-  if (params?.offset !== undefined) q.set("offset", String(params.offset));
-  const qs = q.toString();
-  return handle<GraphNodeResponse[]>(
-    await fetch(`${API_BASE}/graph/nodes${qs ? `?${qs}` : ""}`),
-  );
+  await delay(150);
+  let result = [...MOCK_GRAPH_NODES];
+  if (params?.node_type) {
+    result = result.filter((n) => n.node_type === params.node_type);
+  }
+  const offset = params?.offset ?? 0;
+  const limit = params?.limit ?? 100;
+  return result.slice(offset, offset + limit);
 }
 
 export async function listGraphEdges(params?: {
@@ -243,65 +259,161 @@ export async function listGraphEdges(params?: {
   limit?: number;
   offset?: number;
 }): Promise<GraphEdgeResponse[]> {
-  const q = new URLSearchParams();
-  if (params?.relation_type) q.set("relation_type", params.relation_type);
-  if (params?.limit !== undefined) q.set("limit", String(params.limit));
-  if (params?.offset !== undefined) q.set("offset", String(params.offset));
-  const qs = q.toString();
-  return handle<GraphEdgeResponse[]>(
-    await fetch(`${API_BASE}/graph/edges${qs ? `?${qs}` : ""}`),
-  );
+  await delay(150);
+  let result = [...MOCK_GRAPH_EDGES];
+  if (params?.relation_type) {
+    result = result.filter((e) => e.relation_type === params.relation_type);
+  }
+  const offset = params?.offset ?? 0;
+  const limit = params?.limit ?? 100;
+  return result.slice(offset, offset + limit);
 }
 
 export async function getGraphLineage(
   entity: string,
-  maxDepth = 5,
+  _maxDepth = 5,
 ): Promise<LineageGraphResponse> {
-  return handle<LineageGraphResponse>(
-    await fetch(
-      `${API_BASE}/graph/lineage/${encodeURIComponent(entity)}?max_depth=${maxDepth}`,
-    ),
+  await delay(300);
+  // Find the starting node
+  const startNode = MOCK_GRAPH_NODES.find(
+    (n) =>
+      n.entity_name?.toLowerCase() === entity.toLowerCase() ||
+      n.entity_id?.toLowerCase() === entity.toLowerCase(),
   );
+  if (!startNode) {
+    return { nodes: [], edges: [] };
+  }
+
+  // BFS forward from the start node
+  const visited = new Set<number>([startNode.id]);
+  const queue = [startNode.id];
+  const reachableNodes: GraphNodeResponse[] = [startNode];
+  const reachableEdges: GraphEdgeResponse[] = [];
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const edge of MOCK_GRAPH_EDGES) {
+      if (edge.source_node_id === current && !visited.has(edge.target_node_id)) {
+        visited.add(edge.target_node_id);
+        queue.push(edge.target_node_id);
+        reachableEdges.push(edge);
+        const targetNode = MOCK_GRAPH_NODES.find((n) => n.id === edge.target_node_id);
+        if (targetNode) reachableNodes.push(targetNode);
+      }
+    }
+  }
+
+  return { nodes: reachableNodes, edges: reachableEdges };
 }
 
 export async function getGraphImpact(
   entity: string,
 ): Promise<ImpactAnalysisResponse> {
-  return handle<ImpactAnalysisResponse>(
-    await fetch(`${API_BASE}/graph/impact/${encodeURIComponent(entity)}`),
+  await delay(300);
+  const startNode = MOCK_GRAPH_NODES.find(
+    (n) =>
+      n.entity_name?.toLowerCase() === entity.toLowerCase() ||
+      n.entity_id?.toLowerCase() === entity.toLowerCase(),
   );
+  if (!startNode) {
+    return { entity, start_nodes: [], impacted_nodes: [], total_impacted: 0 };
+  }
+
+  // BFS reverse — who depends on this entity?
+  const visited = new Set<number>([startNode.id]);
+  const impacted: ImpactAnalysisResponse["impacted_nodes"] = [];
+
+  const queue: Array<{ nodeId: number; depth: number; path: string[] }> = [
+    { nodeId: startNode.id, depth: 0, path: [startNode.entity_name ?? ""] },
+  ];
+
+  while (queue.length > 0) {
+    const { nodeId, depth, path } = queue.shift()!;
+    for (const edge of MOCK_GRAPH_EDGES) {
+      if (edge.target_node_id === nodeId && !visited.has(edge.source_node_id)) {
+        visited.add(edge.source_node_id);
+        const sourceNode = MOCK_GRAPH_NODES.find((n) => n.id === edge.source_node_id);
+        if (sourceNode) {
+          const newPath = [...path, sourceNode.entity_name ?? ""];
+          impacted.push({
+            node: sourceNode,
+            depth: depth + 1,
+            relation_type: edge.relation_type ?? "UNKNOWN",
+            path: newPath,
+          });
+          queue.push({ nodeId: sourceNode.id, depth: depth + 1, path: newPath });
+        }
+      }
+    }
+  }
+
+  return {
+    entity,
+    start_nodes: [startNode],
+    impacted_nodes: impacted,
+    total_impacted: impacted.length,
+  };
 }
 
 export async function getGraphNeighbors(
   nodeId: number,
 ): Promise<NeighborsResponse> {
-  return handle<NeighborsResponse>(
-    await fetch(`${API_BASE}/graph/neighbors/${nodeId}`),
-  );
+  await delay(150);
+  const neighbors: NeighborsResponse["neighbors"] = [];
+
+  for (const edge of MOCK_GRAPH_EDGES) {
+    if (edge.source_node_id === nodeId) {
+      const target = MOCK_GRAPH_NODES.find((n) => n.id === edge.target_node_id);
+      if (target) {
+        neighbors.push({
+          direction: "out",
+          relation_type: edge.relation_type,
+          confidence_score: edge.confidence_score ?? 1.0,
+          node: target,
+        });
+      }
+    }
+    if (edge.target_node_id === nodeId) {
+      const source = MOCK_GRAPH_NODES.find((n) => n.id === edge.source_node_id);
+      if (source) {
+        neighbors.push({
+          direction: "in",
+          relation_type: edge.relation_type,
+          confidence_score: edge.confidence_score ?? 1.0,
+          node: source,
+        });
+      }
+    }
+  }
+
+  return { node_id: nodeId, neighbors, total: neighbors.length };
 }
 
 export async function createGraphNode(
   body: CreateGraphNodeRequest,
 ): Promise<GraphNodeResponse> {
-  return handle<GraphNodeResponse>(
-    await fetch(`${API_BASE}/graph/nodes`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }),
-  );
+  await delay(300);
+  return {
+    id: MOCK_GRAPH_NODES.length + 1,
+    node_type: body.node_type,
+    entity_id: body.entity_id,
+    entity_name: body.entity_name ?? null,
+    metadata: body.metadata ?? null,
+  };
 }
 
 export async function createGraphEdge(
   body: CreateGraphEdgeRequest,
 ): Promise<GraphEdgeResponse> {
-  return handle<GraphEdgeResponse>(
-    await fetch(`${API_BASE}/graph/edges`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }),
-  );
+  await delay(300);
+  return {
+    id: MOCK_GRAPH_EDGES.length + 1,
+    source_node_id: body.source_node_id,
+    target_node_id: body.target_node_id,
+    relation_type: body.relation_type,
+    confidence_score: body.confidence_score,
+    created_at: new Date().toISOString(),
+  };
 }
 
 /* ─── Lineage ──────────────────────────────────────────────── */
@@ -310,21 +422,17 @@ export async function listLineage(params?: {
   limit?: number;
   offset?: number;
 }): Promise<LineageEventResponse[]> {
-  const q = new URLSearchParams();
-  if (params?.limit !== undefined) q.set("limit", String(params.limit));
-  if (params?.offset !== undefined) q.set("offset", String(params.offset));
-  const qs = q.toString();
-  return handle<LineageEventResponse[]>(
-    await fetch(`${API_BASE}/lineage${qs ? `?${qs}` : ""}`),
-  );
+  await delay(150);
+  const offset = params?.offset ?? 0;
+  const limit = params?.limit ?? 50;
+  return MOCK_LINEAGE.slice(offset, offset + limit);
 }
 
 export async function getLineageForProposal(
   proposalId: string,
 ): Promise<LineageEventResponse[]> {
-  return handle<LineageEventResponse[]>(
-    await fetch(`${API_BASE}/lineage/${proposalId}`),
-  );
+  await delay(150);
+  return MOCK_LINEAGE.filter((l) => l.proposal_id === proposalId);
 }
 
 /* ─── Insights ─────────────────────────────────────────────── */
@@ -335,23 +443,24 @@ export async function listInsights(params?: {
   limit?: number;
   offset?: number;
 }): Promise<InsightItem[]> {
-  const q = new URLSearchParams();
-  if (params?.category) q.set("category", params.category);
-  if (params?.severity) q.set("severity", params.severity);
-  if (params?.limit !== undefined) q.set("limit", String(params.limit));
-  if (params?.offset !== undefined) q.set("offset", String(params.offset));
-  const qs = q.toString();
-  return handle<InsightItem[]>(
-    await fetch(`${API_BASE}/insights${qs ? `?${qs}` : ""}`),
-  );
+  await delay(150);
+  let result = [...MOCK_INSIGHTS];
+  if (params?.category) {
+    result = result.filter((i) => i.category === params.category);
+  }
+  if (params?.severity) {
+    result = result.filter((i) => i.severity === params.severity);
+  }
+  const offset = params?.offset ?? 0;
+  const limit = params?.limit ?? 50;
+  return result.slice(offset, offset + limit);
 }
 
 export async function getInsightsForProposal(
   proposalId: string,
 ): Promise<InsightItem[]> {
-  return handle<InsightItem[]>(
-    await fetch(`${API_BASE}/insights/${proposalId}`),
-  );
+  await delay(150);
+  return MOCK_INSIGHTS.filter((i) => i.proposal_id === proposalId);
 }
 
 export async function getInsightsSummary(): Promise<{
@@ -360,11 +469,6 @@ export async function getInsightsSummary(): Promise<{
   by_severity: Record<string, number>;
   recent_critical: InsightItem[];
 }> {
-  return handle<{
-    total: number;
-    by_category: Record<string, number>;
-    by_severity: Record<string, number>;
-    recent_critical: InsightItem[];
-  }>(await fetch(`${API_BASE}/insights/summary`));
+  await delay(200);
+  return { ...MOCK_INSIGHTS_SUMMARY };
 }
-
