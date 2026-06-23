@@ -10,6 +10,7 @@ from app.extension_models import ExtBase  # NEW — extension model base
 from app.routers import ingest, proposals, audit, quarantine, sources
 from app.routers import skills, graph, lineage  # NEW — extension routers
 from app.routers import insights  # NEW — insight engine router
+from app.routers import connectors  # NEW — universal database connector router
 
 logger = logging.getLogger("conduit.api")
 logger.setLevel(logging.INFO)
@@ -54,6 +55,7 @@ app.include_router(skills.router, prefix="/api")
 app.include_router(graph.router, prefix="/api")
 app.include_router(lineage.router, prefix="/api")
 app.include_router(insights.router, prefix="/api")  # NEW — insight engine
+app.include_router(connectors.router, prefix="/api")  # NEW — universal database connectors
 
 
 @app.on_event("startup")
