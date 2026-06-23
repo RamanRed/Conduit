@@ -110,3 +110,30 @@ async def disconnect(conn_id: str):
     if conn_id not in factory.connections:
         raise HTTPException(status_code=404, detail=f"Connection '{conn_id}' not found")
     return await factory.disconnect(conn_id)
+
+
+@router.post("/connectors/{conn_id}/sync-graph")
+async def sync_connection_graph(
+    conn_id: str,
+    table_names: Optional[str] = None,
+):
+    """
+    Introspect tables from a registered connector and publish schema
+    into the Neo4j knowledge graph for AI ingest/context.
+
+    Optional query param `table_names`: comma-separated list (default: orders_clean).
+    """
+    from app.services import connector_introspection_service
+
+    tables = [t.strip() for t in table_names.split(",")] if table_names else None
+    try:
+        result = await connector_introspection_service.sync_connection_to_graph(
+            conn_id, tables
+        )
+        return {"status": "success", **result}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Graph sync failed: {exc}")

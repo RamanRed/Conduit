@@ -361,8 +361,10 @@ async def get_impact_analysis(
     query_impact = f"""
     MATCH path = shortestPath((upstream:GraphNode)-[*1..{max_depth}]->(start:GraphNode))
     WHERE id(start) IN $start_ids AND id(upstream) <> id(start)
-    RETURN id(upstream) AS id, upstream.node_type AS node_type, upstream.entity_id AS entity_id, upstream.entity_name AS entity_name, upstream.metadata_json AS metadata_json,
-           length(path) AS depth, [x IN nodes(path) | x.entity_name] AS path_names, relationships(path)[0] AS r
+    RETURN id(upstream) AS id, upstream.node_type AS node_type, upstream.entity_id AS entity_id,
+           upstream.entity_name AS entity_name, upstream.metadata_json AS metadata_json,
+           length(path) AS depth, [x IN nodes(path) | x.entity_name] AS path_names,
+           type(relationships(path)[0]) AS rel_type
     """
     records = await neo4j_client.execute_query(query_impact, {"start_ids": start_ids})
 
@@ -375,7 +377,7 @@ async def get_impact_analysis(
         seen.add(u_id)
         
         reversed_path = list(reversed(r["path_names"]))
-        rel_type = r["r"].type if r["r"] else "DEPENDS_ON"
+        rel_type = r.get("rel_type") or "DEPENDS_ON"
         
         impacted.append({
             "node": {
@@ -410,15 +412,19 @@ async def auto_link_execution(
 ) -> None:
     """
     Auto-populate the relationship graph in Neo4j after a successful execution.
+    Uses canonical tbl-{table} entity IDs consistent with the knowledge graph.
     """
     try:
+        from app.services import graph_knowledge_service
+        table_eid = graph_knowledge_service.table_entity_id(target_table)
+
         file_node = await get_or_create_node(
             db, "FILE", source_filename, source_filename,
             {"proposal_id": proposal_id},
         )
 
         table_node = await get_or_create_node(
-            db, "TABLE", target_table, target_table, {}
+            db, "STORAGE_UNIT", table_eid, target_table, {}
         )
 
         await get_or_create_edge(
@@ -435,7 +441,7 @@ async def auto_link_execution(
 
         if skill_name:
             skill_node = await get_or_create_node(
-                db, "SKILL", skill_name, skill_name, {"auto_linked": True}
+                db, "SKILL", f"skill-{skill_name}", skill_name, {"auto_linked": True}
             )
             await get_or_create_edge(
                 db, table_node["id"], skill_node["id"], "USES_SKILL", 1.0
@@ -444,196 +450,18 @@ async def auto_link_execution(
         logger.error(f"Failed to auto-link execution: {exc}")
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Metadata Catalog Sync from PostgreSQL
+#  Metadata sync — delegated to connector → graph pipeline
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def sync_metadata_catalog_from_pg(db: AsyncSession) -> None:
     """
-    Synchronizes the PostgreSQL database metadata catalog into Neo4j using the hierarchy:
-    CentralDBLink -> DbService -> Project -> Database -> StorageUnit
+    Deprecated: PG catalog is no longer the knowledge source.
+    Use connector_introspection_service.sync_connection_to_graph() instead.
+    Kept as a no-op wrapper so existing /graph/sync callers don't break.
     """
-    from sqlalchemy import select
-    from app.models import WarehouseUnit, SubProject, TableMetadata, AttributeMetadata
-    
-    logger.info("Starting PostgreSQL metadata catalog sync to Neo4j...")
-    
-    # 1. Create the Central Database Link node
-    central_node = await get_or_create_node(
-        None,
-        node_type="CENTRAL_DB_LINK",
-        entity_id="central-db-link",
-        entity_name="Central Database Link",
-        metadata={}
-    )
-    
-    # 2. Sync Warehouse Units (Services)
-    res_warehouses = await db.execute(select(WarehouseUnit))
-    warehouses = res_warehouses.scalars().all()
-    warehouse_nodes = {}
-    
-    for wh in warehouses:
-        service_id = f"dbservice_{wh.id}"
-        service_node = await get_or_create_node(
-            None,
-            node_type="DB_SERVICE",
-            entity_id=service_id,
-            entity_name=wh.name,
-            metadata={
-                "type": wh.unit_type,
-                "connection_secret_id": wh.connection_secret_id
-            }
-        )
-        warehouse_nodes[wh.id] = service_node
-        
-        await get_or_create_edge(
-            None,
-            source_node_id=central_node["id"],
-            target_node_id=service_node["id"],
-            relation_type="HAS_SERVICE"
-        )
-        
-    # 3. Sync SubProjects (Projects)
-    res_projects = await db.execute(select(SubProject))
-    projects = res_projects.scalars().all()
-    
-    for proj in projects:
-        project_id = f"project_{proj.id}"
-        proj_node = await get_or_create_node(
-            None,
-            node_type="PROJECT",
-            entity_id=project_id,
-            entity_name=proj.name,
-            metadata={
-                "description": proj.description,
-                "data_role": proj.data_role,
-                "data_owner": proj.data_owner,
-                "business_kpi_impact": proj.business_kpi_impact
-            }
-        )
-        
-        if proj.warehouse_id in warehouse_nodes:
-            wh_node = warehouse_nodes[proj.warehouse_id]
-            await get_or_create_edge(
-                None,
-                source_node_id=wh_node["id"],
-                target_node_id=proj_node["id"],
-                relation_type="HAS_PROJECT"
-            )
-            
-        # 4. Create Database node representing the physical DB schema
-        db_id = f"db_{proj.id}_instance"
-        db_node = await get_or_create_node(
-            None,
-            node_type="DATABASE",
-            entity_id=db_id,
-            entity_name="warehousedb",
-            metadata={
-                "description": f"Warehouse database schema for project: {proj.name}",
-                "why_present": "Holds the master clean datasets and aggregates for business KPI calculation."
-            }
-        )
-        await get_or_create_edge(
-            None,
-            source_node_id=proj_node["id"],
-            target_node_id=db_node["id"],
-            relation_type="HAS_DATABASE"
-        )
-        
-        # 5. Fetch TableMetadata for this project
-        res_tables = await db.execute(
-            select(TableMetadata).where(TableMetadata.sub_project_id == proj.id)
-        )
-        tables = res_tables.scalars().all()
-        
-        for table in tables:
-            res_attrs = await db.execute(
-                select(AttributeMetadata).where(AttributeMetadata.table_id == table.id)
-            )
-            attrs = res_attrs.scalars().all()
-            
-            columns_list = []
-            for attr in attrs:
-                col_str = f"{attr.column_name}: {attr.data_type}"
-                if attr.is_required:
-                    col_str += " (Required)"
-                if attr.is_pii:
-                    col_str += " (PII)"
-                columns_list.append(col_str)
-                
-            schema_details = ", ".join(columns_list)
-            
-            # Storage Unit properties
-            metadata = {
-                "type": "TABLE",
-                "schema_details": schema_details,
-                "file_format_type": table.file_format_type,
-                "description": table.semantic_description or "No description provided.",
-                "why_present": f"Stores clean ingestion results for {table.table_name}.",
-                "imp_details": f"Version: {table.version_number}. Aliases: {', '.join(table.aliases or [])}."
-            }
-            
-            table_entity_id = f"tbl-{table.table_name}"
-            
-            storage_node = await get_or_create_node(
-                None,
-                node_type="STORAGE_UNIT",
-                entity_id=table_entity_id,
-                entity_name=table.table_name,
-                metadata=metadata
-            )
-            
-            await get_or_create_edge(
-                None,
-                source_node_id=db_node["id"],
-                target_node_id=storage_node["id"],
-                relation_type="HAS_STORAGE_UNIT"
-            )
-            
-            # Seed COLUMN nodes to maintain full backwards compatibility
-            for attr in attrs:
-                col_entity_id = f"col-{table.table_name}-{attr.column_name}"
-                col_node = await get_or_create_node(
-                    None,
-                    node_type="COLUMN",
-                    entity_id=col_entity_id,
-                    entity_name=attr.column_name,
-                    metadata={
-                        "is_pii": attr.is_pii,
-                        "parent_table": table.table_name,
-                        "data_type": attr.data_type,
-                        "description": attr.semantic_description
-                    }
-                )
-                await get_or_create_edge(
-                    None,
-                    source_node_id=col_node["id"],
-                    target_node_id=storage_node["id"],
-                    relation_type="BELONGS_TO"
-                )
-
-    # Let's seed demo graph edges / nodes if empty
-    # KPI and Skill nodes can be seeded:
-    await get_or_create_node(None, "KPI", "kpi-revenue", "monthly_revenue", {
-        "description": "Aggregate revenue calculation used in executive dashboards."
-    })
-    await get_or_create_node(None, "DASHBOARD", "dash-exec", "Executive Revenue Dashboard", {
-        "description": "Real-time executive dashboard showing revenue trends.",
-        "refresh_frequency": "hourly"
-    })
-    
-    # We can connect kpi and dashboard to orders table
-    # Match order table node:
-    res_ord = await neo4j_client.execute_query("MATCH (o:GraphNode {entity_id: 'tbl-orders_clean'}), (k:GraphNode {entity_id: 'kpi-revenue'}), (d:GraphNode {entity_id: 'dash-exec'}) RETURN id(o) AS o_id, id(k) AS k_id, id(d) AS d_id")
-    if res_ord:
-        o_id = res_ord[0]["o_id"]
-        k_id = res_ord[0]["k_id"]
-        d_id = res_ord[0]["d_id"]
-        if o_id and k_id:
-            await get_or_create_edge(None, o_id, k_id, "AFFECTS_KPI", 0.9)
-        if d_id and k_id:
-            await get_or_create_edge(None, d_id, k_id, "DEPENDS_ON", 0.9)
-            
-    logger.info("PostgreSQL metadata catalog sync to Neo4j finished successfully!")
+    from app.services import graph_knowledge_service
+    logger.info("PG catalog sync skipped — knowledge graph is fed by connectors.")
+    await graph_knowledge_service.seed_demo_knowledge()
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Audit Logs Linkage (PG query)
@@ -644,32 +472,15 @@ async def get_audit_history_for_node(
     db: AsyncSession,
 ) -> List[dict]:
     """
-    Query PostgreSQL for audit records linked to this Neo4j entity_id.
+    Query PostgreSQL audit ledger for records linked to a Neo4j entity_id.
     """
-    from sqlalchemy import select, or_
-    from app.models import PipelineSkillsLedger, Proposal, TableMetadata
-    
-    conditions = [PipelineSkillsLedger.graph_node_id == entity_id]
-    
-    # Fallback to matching on table name / table_id for backward compatibility
-    table_name = None
-    if entity_id.startswith("tbl-"):
-        table_name = entity_id[4:]
-    elif entity_id.startswith("storage_"):
-        pass
-        
-    if table_name:
-        tbl_res = await db.execute(
-            select(TableMetadata).where(TableMetadata.table_name == table_name)
-        )
-        tbl = tbl_res.scalars().first()
-        if tbl:
-            conditions.append(PipelineSkillsLedger.table_id == tbl.id)
-            
+    from sqlalchemy import select
+    from app.models import PipelineSkillsLedger, Proposal
+
     stmt = (
         select(PipelineSkillsLedger, Proposal)
         .join(Proposal, PipelineSkillsLedger.proposal_id == Proposal.id, isouter=True)
-        .where(or_(*conditions))
+        .where(PipelineSkillsLedger.graph_node_id == entity_id)
         .order_by(PipelineSkillsLedger.executed_at.desc())
     )
     

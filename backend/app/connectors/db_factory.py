@@ -81,7 +81,7 @@ class DBConnectionFactory:
         try:
             # 1. Validate credentials against the provider schema
             validated = validate_credentials(db_type, credentials)
-            creds = validated.dict()
+            creds = validated.model_dump()
 
             # 2. Test connection (throws on failure)
             await self._create_connection(db_type, creds, test_only=True)

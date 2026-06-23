@@ -290,12 +290,18 @@ async def get_impact_analysis(
 @router.post("/graph/sync", status_code=200)
 async def sync_metadata_catalog(db: AsyncSession = Depends(get_db)):
     """
-    Manually trigger a sync of metadata (WarehouseUnit, SubProject, TableMetadata,
-    AttributeMetadata) from PostgreSQL to the Neo4j graph catalog.
+    Sync knowledge graph from the default warehouse connector.
+    Org path: register connector → POST /connectors/{id}/sync-graph.
     """
     try:
-        await graph_service.sync_metadata_catalog_from_pg(db)
-        return {"status": "success", "message": "Metadata catalog synchronized successfully."}
+        from app.services import connector_introspection_service
+        from app.connectors.db_factory import factory
+        if "warehouse" in factory.connections:
+            result = await connector_introspection_service.sync_connection_to_graph("warehouse")
+            return {"status": "success", "message": "Knowledge graph synced from warehouse connector.", **result}
+        from app.services import graph_knowledge_service
+        await graph_knowledge_service.seed_demo_knowledge()
+        return {"status": "success", "message": "Demo knowledge graph seeded (no connector registered)."}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Synchronization failed: {str(exc)}")
 

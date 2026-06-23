@@ -207,13 +207,8 @@ async def ingest_file(
             suggested_skills_to_add=[]
         )
     
-    # Get table metadata
-    from app.models import TableMetadata
-    from sqlalchemy import select
-    stmt = select(TableMetadata).where(TableMetadata.table_name == target_table)
-    res = await db.execute(stmt)
-    tbl = res.scalars().first()
-    table_metadata = {"semantic_description": tbl.semantic_description if tbl else ""}
+    # Table semantic context for AI (from knowledge graph, not PG)
+    table_metadata = {"semantic_description": target_schema.get("semantic_description", "")}
 
     # ── STAGE 4: Build context bundle BEFORE AI call (Phase 2 reorder) ────────
     context_bundle = None

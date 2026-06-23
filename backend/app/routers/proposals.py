@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List, Optional
 from app.database import get_db
-from app.models import Proposal, PipelineSkillsLedger, TableMetadata
+from app.models import Proposal, PipelineSkillsLedger
 from app.schemas import ProposalResponse, ApproveRequest, RejectRequest, ExecutionResult, DriftItem
 from app.services.execution_service import execute_proposal
 # NEW — context bundle retrieval (additive, read-only)
@@ -93,14 +93,8 @@ async def reject_proposal(proposal_id: str, req: RejectRequest, db: AsyncSession
         
     proposal.status = "REJECTED"
     
-    # STAGE 2/7 FIX: use proposal.target_table instead of hardcoded string
-    table_name = proposal.target_table or "orders_clean"
-    stmt = select(TableMetadata).where(TableMetadata.table_name == table_name)
-    res = await db.execute(stmt)
-    tbl = res.scalars().first()
-    
     ledger_entry = PipelineSkillsLedger(
-        table_id=tbl.id if tbl else None,
+        table_id=None,
         proposal_id=proposal.id,
         skill_name="rejected_by_engineer",
         applied_by_llm_version=None,

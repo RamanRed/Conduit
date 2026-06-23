@@ -39,7 +39,7 @@ class Neo4jClient:
         except Exception as exc:
             logger.error(f"Failed to connect to Neo4j: {exc}")
             self.driver = None
-            raise exc
+            # Non-fatal: core audit/ingest still works; graph features degrade gracefully
 
     async def init_schema(self) -> None:
         """Create constraints and indexes in Neo4j."""

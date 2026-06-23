@@ -101,6 +101,19 @@ async def register_skill(
         # Prevent auto-generation issues from breaking the main transaction, log error
         print(f"Failed to auto-generate and save skill script: {e}")
 
+    # Mirror skill into Neo4j knowledge graph for AI context retrieval
+    try:
+        from app.services import graph_knowledge_service
+        await graph_knowledge_service.upsert_skill(
+            skill_name=skill_name,
+            category=category,
+            description=description,
+            use_cases=use_cases,
+            status="ACTIVE",
+        )
+    except Exception:
+        pass
+
     return skill
 
 
