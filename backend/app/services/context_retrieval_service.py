@@ -16,7 +16,7 @@ from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.extension_models import GraphNode, GraphEdge, Skill
+from app.extension_models import Skill
 from app.services import skill_registry_service, graph_service
 
 
@@ -46,13 +46,13 @@ async def build_context_bundle(
     lineage_data = await graph_service.get_lineage(
         db, entity_name=target_table, max_depth=2
     )
-    graph_nodes: List[GraphNode] = lineage_data.get("nodes", [])
+    graph_nodes: List[dict] = lineage_data.get("nodes", [])
 
     # 2. Related entities (all nodes within 2 hops, excluding the target itself)
     related_entities = [
-        {"id": n.id, "name": n.entity_name, "type": n.node_type}
+        {"id": n["id"], "name": n["entity_name"], "type": n["node_type"]}
         for n in graph_nodes
-        if n.entity_name and n.entity_name.lower() != target_table.lower()
+        if n.get("entity_name") and n["entity_name"].lower() != target_table.lower()
     ]
 
     # 3. Direct DEPENDS_ON dependencies for the target table node
@@ -60,24 +60,24 @@ async def build_context_bundle(
     pii_columns: List[str] = []
     table_nodes = [
         n for n in graph_nodes
-        if n.entity_name and n.entity_name.lower() == target_table.lower()
+        if n.get("entity_name") and n["entity_name"].lower() == target_table.lower()
     ]
     if table_nodes:
-        target_node_id = table_nodes[0].id
+        target_node_id = table_nodes[0]["id"]
         deps = await graph_service.get_dependencies(db, node_id=target_node_id)
         dependencies = [
-            {"id": d.id, "name": d.entity_name, "type": d.node_type}
+            {"id": d["id"], "name": d["entity_name"], "type": d["node_type"]}
             for d in deps
         ]
 
         # Collect PII column names from node metadata (COLUMN-type nodes)
         for node in graph_nodes:
             if (
-                node.node_type == "COLUMN"
-                and node.node_metadata  # ← FIXED: was node.metadata (bug)
-                and node.node_metadata.get("is_pii")
+                node.get("node_type") == "COLUMN"
+                and node.get("node_metadata")
+                and node["node_metadata"].get("is_pii")
             ):
-                pii_columns.append(node.entity_name or "")
+                pii_columns.append(node.get("entity_name") or "")
 
     # 4. Keyword skill search — use table name + column names as keywords
     keywords = [target_table] + (incoming_columns or [])
@@ -95,11 +95,10 @@ async def build_context_bundle(
     ]
 
     # 5. Business context strings extracted from node metadata
-    #    FIX: was node.metadata (resolved to SQLAlchemy MetaData object)
     business_context: List[str] = []
     for node in graph_nodes:
-        if node.node_metadata:                           # ← FIXED
-            kpi = node.node_metadata.get("business_kpi_impact")   # ← FIXED
+        if node.get("node_metadata"):
+            kpi = node["node_metadata"].get("business_kpi_impact")
             if kpi:
                 business_context.append(kpi)
 
@@ -111,6 +110,7 @@ async def build_context_bundle(
         "business_context": business_context,
         "pii_columns": list(set(pii_columns)),
     }
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────

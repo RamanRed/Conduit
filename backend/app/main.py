@@ -3,7 +3,7 @@ import time
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.database import engine
+from app.database import engine, AsyncSessionLocal
 from app.models import Base
 from app.extension_models import ExtBase  # NEW — extension model base
 
@@ -68,6 +68,8 @@ async def on_startup():
         await conn.execute(text("ALTER TABLE conduit.proposals ADD COLUMN IF NOT EXISTS description_md TEXT"))
         await conn.execute(text("ALTER TABLE conduit.proposals ADD COLUMN IF NOT EXISTS suggested_skills_to_add JSONB"))
         await conn.execute(text("ALTER TABLE conduit.proposals ADD COLUMN IF NOT EXISTS enrichment_applied JSONB"))
+        await conn.execute(text("ALTER TABLE conduit.pipeline_skills_ledger ADD COLUMN IF NOT EXISTS graph_node_id VARCHAR(255)"))
+
         await conn.execute(text("ALTER TABLE public.orders_clean ADD COLUMN IF NOT EXISTS amount_tier VARCHAR(20)"))
         await conn.execute(text("ALTER TABLE public.orders_clean ADD COLUMN IF NOT EXISTS amount_outlier BOOLEAN"))
         await conn.execute(text("ALTER TABLE public.orders_clean ADD COLUMN IF NOT EXISTS is_potential_duplicate BOOLEAN"))
@@ -78,3 +80,22 @@ async def on_startup():
         await conn.execute(text("CREATE SCHEMA IF NOT EXISTS conduit_graph"))
         await conn.execute(text("CREATE SCHEMA IF NOT EXISTS conduit_lineage"))
         await conn.run_sync(ExtBase.metadata.create_all)
+
+    # Initialize Neo4j Client connection
+    from app.core.neo4j_client import neo4j_client
+    await neo4j_client.connect()
+
+    # Sync PostgreSQL metadata catalog to Neo4j
+    try:
+        from app.services import graph_service
+        async with AsyncSessionLocal() as session:
+            await graph_service.sync_metadata_catalog_from_pg(session)
+    except Exception as exc:
+        logger.error(f"Startup metadata catalog sync failed: {exc}")
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    from app.core.neo4j_client import neo4j_client
+    await neo4j_client.close()
+

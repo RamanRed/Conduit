@@ -88,48 +88,6 @@ class SkillIssueReference(ExtBase):
 
 
 # ─────────────────────────────────────────────
-#  RELATIONSHIP GRAPH  (conduit_graph schema)
-# ─────────────────────────────────────────────
-
-class GraphNode(ExtBase):
-    __tablename__ = "graph_nodes"
-    __table_args__ = (
-        # STAGE 1 FIX: Unique constraint enables ON CONFLICT and prevents duplicate
-        # nodes for the same (type, entity_id) pair across container restarts or
-        # multiple ingest runs.
-        UniqueConstraint("node_type", "entity_id", name="uq_graph_node_type_entity"),
-        {"schema": "conduit_graph"},
-    )
-
-    id            = Column(Integer, primary_key=True, autoincrement=True)
-    node_type     = Column(String(50),  nullable=True)   # TABLE, SKILL, KPI, PROJECT…
-    entity_id     = Column(String(255), nullable=True)
-    entity_name   = Column(String(255), nullable=True)
-    node_metadata = Column("metadata", JSONB, nullable=True)
-
-
-class GraphEdge(ExtBase):
-    __tablename__ = "graph_edges"
-    __table_args__ = (
-        # STAGE 1 FIX: Prevents duplicate edges of the same type between the same
-        # node pair.  get_or_create_edge and ON CONFLICT in seed SQL both rely on
-        # this constraint being present.
-        UniqueConstraint(
-            "source_node_id", "target_node_id", "relation_type",
-            name="uq_graph_edge",
-        ),
-        {"schema": "conduit_graph"},
-    )
-
-    id               = Column(Integer, primary_key=True, autoincrement=True)
-    source_node_id   = Column(Integer, ForeignKey("conduit_graph.graph_nodes.id", ondelete="CASCADE"))
-    target_node_id   = Column(Integer, ForeignKey("conduit_graph.graph_nodes.id", ondelete="CASCADE"))
-    relation_type    = Column(String(100), nullable=True)
-    confidence_score = Column(Float, default=1.0)
-    created_at       = Column(DateTime, default=datetime.utcnow)
-
-
-# ─────────────────────────────────────────────
 #  DATA LINEAGE  (conduit_lineage schema)
 # ─────────────────────────────────────────────
 

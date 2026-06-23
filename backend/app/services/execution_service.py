@@ -63,7 +63,8 @@ async def execute_proposal(
             applied_by_llm_version=llm_model_used,
             transformation_script_ref=generated_code,
             human_approver_id=approver_id,
-            execution_status="FAILED"
+            execution_status="FAILED",
+            graph_node_id=f"tbl-{target_table}"
         )
         db.add(ledger_entry)
         await db.commit()
@@ -93,7 +94,8 @@ async def execute_proposal(
             applied_by_llm_version=llm_model_used,
             transformation_script_ref=generated_code,
             human_approver_id=approver_id,
-            execution_status="FAILED"
+            execution_status="FAILED",
+            graph_node_id=f"tbl-{target_table}"
         )
         db.add(ledger_entry)
         await db.commit()
@@ -119,7 +121,8 @@ async def execute_proposal(
             applied_by_llm_version=llm_model_used,
             transformation_script_ref=generated_code,
             human_approver_id=approver_id,
-            execution_status="FAILED"
+            execution_status="FAILED",
+            graph_node_id=f"tbl-{target_table}"
         )
         db.add(ledger_entry)
         await db.commit()
@@ -179,7 +182,8 @@ async def execute_proposal(
             applied_by_llm_version=llm_model_used,
             transformation_script_ref=generated_code,
             human_approver_id=approver_id,
-            execution_status=ledger_status
+            execution_status=ledger_status,
+            graph_node_id=f"tbl-{target_table}"
         )
         db.add(ledger_entry)
         proposal.status = "EXECUTED"
@@ -194,7 +198,8 @@ async def execute_proposal(
             applied_by_llm_version=llm_model_used,
             transformation_script_ref=generated_code,
             human_approver_id=approver_id,
-            execution_status="ROLLEDBACK"
+            execution_status="ROLLEDBACK",
+            graph_node_id=f"tbl-{target_table}"
         ))
         await db.commit()
         # After a failure, reset the proposal so it can be retried

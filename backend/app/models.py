@@ -63,6 +63,8 @@ class PipelineSkillsLedger(Base):
     human_approver_id = Column(String)
     execution_status = Column(String)
     executed_at = Column(DateTime, default=datetime.utcnow)
+    graph_node_id = Column(String, nullable=True)
+
 
 class QuarantineRecord(Base):
     __tablename__ = "quarantine_records"
