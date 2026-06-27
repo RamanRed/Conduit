@@ -1,4 +1,6 @@
 from pydantic_settings import BaseSettings
+from pydantic import model_validator
+from typing import Optional
 
 class Settings(BaseSettings):
     GROQ_API_KEY: str
@@ -8,9 +10,19 @@ class Settings(BaseSettings):
     MOCK_AI: bool = False
     NEO4J_URI: str = "bolt://localhost:7687"
     NEO4J_USER: str = "neo4j"
+    NEO4J_USERNAME: Optional[str] = None
     NEO4J_PASSWORD: str = "conduit_graph_2026"
+    # Neo4j Aura: database name (same as instance ID on Aura)
+    NEO4J_DATABASE: Optional[str] = None
+
+    @model_validator(mode="after")
+    def resolve_neo4j_user(self):
+        if self.NEO4J_USERNAME and (self.NEO4J_USER == "neo4j" or not self.NEO4J_USER):
+            self.NEO4J_USER = self.NEO4J_USERNAME
+        return self
 
     class Config:
         env_file = ".env"
+        extra = "ignore"
 
 settings = Settings()

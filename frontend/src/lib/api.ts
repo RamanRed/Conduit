@@ -17,458 +17,246 @@ import type {
   RejectRequest,
   SkillDetailResponse,
   SkillResponse,
-  WarehouseUnitResponse,
   SuggestTargetResponse,
   InsightItem,
+  ConnectorProvider,
+  ConnectorConnection,
+  RegisterConnectorRequest,
 } from "./types";
-
-import {
-  MOCK_PROPOSALS,
-  MOCK_AUDIT,
-  MOCK_QUARANTINE,
-  MOCK_SOURCES,
-  MOCK_SKILLS,
-  MOCK_SKILL_DETAILS,
-  MOCK_GRAPH_NODES,
-  MOCK_GRAPH_EDGES,
-  MOCK_LINEAGE,
-  MOCK_INSIGHTS,
-  MOCK_CONTEXTS,
-  MOCK_SUGGEST_TARGET,
-  MOCK_EXECUTION_RESULT,
-  MOCK_INSIGHTS_SUMMARY,
-} from "./mockData";
 
 /* ─── Helpers ──────────────────────────────────────────────── */
 
-/** Simulate network latency */
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+const NEXT_PUBLIC_API_URL =
+  (typeof window !== "undefined" ? (window as any).NEXT_PUBLIC_API_URL : null) ||
+  process.env.NEXT_PUBLIC_API_URL ||
+  "";
 
-/* ─── Core ingest / proposals / execution ─────────────────── */
-
-export async function ingestFile(
-  _file: File,
-  _targetTable: string,
-  _descriptionMd?: string,
-): Promise<ProposalResponse> {
-  // Simulate LLM processing time
-  await delay(3000);
-  // Return the SCHEMA_EVOLUTION proposal for the most interesting demo
-  return { ...MOCK_PROPOSALS[1] };
-}
-
-export async function suggestTargetTable(
-  _file: File,
-): Promise<SuggestTargetResponse> {
-  await delay(1500);
-  return { ...MOCK_SUGGEST_TARGET };
-}
-
-export async function listProposals(params?: {
-  limit?: number;
-  offset?: number;
-  status?: string;
-}): Promise<ProposalResponse[]> {
-  await delay(200);
-  let result = [...MOCK_PROPOSALS];
-  if (params?.status) {
-    result = result.filter((p) => p.gateway_status === params.status);
+async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
+  const url = `${NEXT_PUBLIC_API_URL}${path}`;
+  const res = await fetch(url, options);
+  if (!res.ok) {
+    let errText = "";
+    try {
+      const data = await res.json();
+      const detail = data.detail;
+      if (typeof detail === "string") {
+        errText = detail;
+      } else if (detail && typeof detail === "object") {
+        errText = (detail as any).detail ?? JSON.stringify(detail);
+      } else {
+        errText = JSON.stringify(data);
+      }
+    } catch {
+      try { errText = await res.text(); } catch {}
+    }
+    throw new Error(errText || `API request failed (status ${res.status})`);
   }
-  const offset = params?.offset ?? 0;
-  const limit = params?.limit ?? 50;
-  return result.slice(offset, offset + limit);
+  return res.json() as Promise<T>;
+}
+
+/* ─── Ingest / Proposals / Execution ──────────────────────── */
+
+export async function ingestFile(file: File, targetTable: string, descriptionMd?: string): Promise<ProposalResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("target_table", targetTable);
+  if (descriptionMd) formData.append("description_md", descriptionMd);
+  return apiRequest<ProposalResponse>("/api/ingest", { method: "POST", body: formData });
+}
+
+export async function suggestTargetTable(file: File): Promise<SuggestTargetResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  return apiRequest<SuggestTargetResponse>("/api/suggest-target", { method: "POST", body: formData });
+}
+
+export async function listProposals(params?: { limit?: number; offset?: number; status?: string }): Promise<ProposalResponse[]> {
+  const q = new URLSearchParams();
+  if (params?.limit !== undefined) q.append("limit", String(params.limit));
+  if (params?.offset !== undefined) q.append("offset", String(params.offset));
+  if (params?.status && params.status !== "ALL") q.append("status", params.status);
+  const qs = q.toString();
+  return apiRequest<ProposalResponse[]>(`/api/proposals${qs ? "?" + qs : ""}`);
 }
 
 export async function getProposal(id: string): Promise<ProposalResponse> {
-  await delay(150);
-  const found = MOCK_PROPOSALS.find((p) => p.proposal_id === id);
-  if (!found) {
-    throw new Error(`Proposal ${id} not found`);
-  }
-  return { ...found };
+  return apiRequest<ProposalResponse>(`/api/proposals/${id}`);
 }
 
-export async function getProposalContext(
-  id: string,
-): Promise<ProposalContextResponse> {
-  await delay(200);
-  const found = MOCK_CONTEXTS[id];
-  if (found) return { ...found };
-  // Fallback: return a generic context
-  return {
-    proposal_id: id,
-    target_table: "orders_clean",
-    context_bundle: {
-      related_skills: [
-        { skill_name: "pii_masking", relevance: "HIGH", reason: "PII detected" },
-      ],
-      related_entities: [
-        { entity: "orders_clean", type: "TABLE", relationship: "target" },
-      ],
-      pii_columns: ["customer_email"],
-      business_context: "Core transactional data from the e-commerce platform.",
-      dependencies: [],
-    },
-    generated_at: new Date().toISOString(),
-  };
+export async function getProposalContext(id: string): Promise<ProposalContextResponse> {
+  return apiRequest<ProposalContextResponse>(`/api/proposals/${id}/context`);
 }
 
-export async function approveProposal(
-  id: string,
-  _body: ApproveRequest,
-): Promise<ExecutionResult> {
-  await delay(1200);
-  return {
-    ...MOCK_EXECUTION_RESULT,
-    proposal_id: id,
-    insights: MOCK_EXECUTION_RESULT.insights?.map((i) => ({ ...i, proposal_id: id })) ?? null,
-  };
+export async function approveProposal(id: string, body: ApproveRequest): Promise<ExecutionResult> {
+  return apiRequest<ExecutionResult>(`/api/proposals/${id}/approve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
 
-export async function rejectProposal(
-  _id: string,
-  _body: RejectRequest,
-): Promise<{ status: string }> {
-  await delay(500);
-  return { status: "REJECTED" };
+export async function rejectProposal(id: string, body: RejectRequest): Promise<{ status: string }> {
+  return apiRequest<{ status: string }>(`/api/proposals/${id}/reject`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
 
-/* ─── Audit / Quarantine / Sources ─────────────────────────── */
+/* ─── Audit / Quarantine ────────────────────────────────────── */
 
-export async function listAudit(
-  limit = 50,
-  offset = 0,
-): Promise<AuditEntry[]> {
-  await delay(150);
-  return MOCK_AUDIT.slice(offset, offset + limit);
+export async function listAudit(limit = 50, offset = 0): Promise<AuditEntry[]> {
+  return apiRequest<AuditEntry[]>(`/api/audit?limit=${limit}&offset=${offset}`);
 }
 
-export async function listAuditForProposal(
-  proposalId: string,
-): Promise<AuditEntry[]> {
-  await delay(150);
-  return MOCK_AUDIT.filter((a) => a.proposal_id === proposalId);
+export async function listAuditForProposal(proposalId: string): Promise<AuditEntry[]> {
+  return apiRequest<AuditEntry[]>(`/api/audit?proposal_id=${proposalId}`);
 }
 
 export async function getAuditEntry(id: number): Promise<AuditEntry> {
-  await delay(150);
-  const found = MOCK_AUDIT.find((a) => a.id === id);
-  if (!found) {
-    throw new Error(`Audit entry ${id} not found`);
-  }
-  return { ...found };
+  return apiRequest<AuditEntry>(`/api/audit/${id}`);
 }
 
 export async function listQuarantine(): Promise<QuarantineEntry[]> {
-  await delay(150);
-  return [...MOCK_QUARANTINE];
+  return apiRequest<QuarantineEntry[]>("/api/quarantine");
 }
 
-export async function getQuarantineForProposal(
-  proposalId: string,
-): Promise<QuarantineEntry[]> {
-  await delay(150);
-  return MOCK_QUARANTINE.filter((q) => q.proposal_id === proposalId);
+export async function getQuarantineForProposal(proposalId: string): Promise<QuarantineEntry[]> {
+  return apiRequest<QuarantineEntry[]>(`/api/quarantine/${proposalId}`);
 }
 
-export async function listSources(): Promise<WarehouseUnitResponse[]> {
-  await delay(100);
-  return [...MOCK_SOURCES];
+/* ─── Connectors ────────────────────────────────────────────── */
+
+export async function listProviders(): Promise<ConnectorProvider[]> {
+  const data = await apiRequest<{ providers: ConnectorProvider[] }>("/api/connectors/providers");
+  return data.providers;
+}
+
+export async function listConnections(): Promise<ConnectorConnection[]> {
+  return apiRequest<ConnectorConnection[]>("/api/connectors");
+}
+
+export async function registerConnector(body: RegisterConnectorRequest): Promise<{ status: string; conn_id: string; latency_ms: number }> {
+  return apiRequest("/api/connectors/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function disconnectConnector(connId: string): Promise<{ status: string }> {
+  return apiRequest(`/api/connectors/${connId}`, { method: "DELETE" });
+}
+
+export async function syncConnectorGraph(connId: string, tableNames?: string): Promise<{ status: string }> {
+  const qs = tableNames ? `?table_names=${encodeURIComponent(tableNames)}` : "";
+  return apiRequest(`/api/connectors/${connId}/sync-graph${qs}`, { method: "POST" });
 }
 
 /* ─── Skills ───────────────────────────────────────────────── */
 
-export async function listSkills(params?: {
-  category?: string;
-  status?: string;
-  limit?: number;
-  offset?: number;
-}): Promise<SkillResponse[]> {
-  await delay(150);
-  let result = [...MOCK_SKILLS];
-  if (params?.category) {
-    result = result.filter((s) => s.category === params.category);
-  }
-  if (params?.status) {
-    result = result.filter((s) => s.status === params.status);
-  }
-  const offset = params?.offset ?? 0;
-  const limit = params?.limit ?? 50;
-  return result.slice(offset, offset + limit);
+export async function listSkills(params?: { category?: string; status?: string; limit?: number; offset?: number }): Promise<SkillResponse[]> {
+  const q = new URLSearchParams();
+  if (params?.limit !== undefined) q.append("limit", String(params.limit));
+  if (params?.offset !== undefined) q.append("offset", String(params.offset));
+  if (params?.category && params.category !== "ALL") q.append("category", params.category);
+  if (params?.status && params.status !== "ALL") q.append("status", params.status);
+  const qs = q.toString();
+  return apiRequest<SkillResponse[]>(`/api/skills${qs ? "?" + qs : ""}`);
 }
 
 export async function searchSkills(q: string): Promise<SkillResponse[]> {
-  await delay(200);
-  const lower = q.toLowerCase();
-  return MOCK_SKILLS.filter(
-    (s) =>
-      s.skill_name.toLowerCase().includes(lower) ||
-      s.description.toLowerCase().includes(lower) ||
-      (s.use_cases && s.use_cases.toLowerCase().includes(lower)),
-  );
+  return apiRequest<SkillResponse[]>(`/api/skills/search?q=${encodeURIComponent(q)}`);
 }
 
 export async function getSkill(id: number): Promise<SkillDetailResponse> {
-  await delay(150);
-  const found = MOCK_SKILL_DETAILS[id];
-  if (!found) {
-    throw new Error(`Skill ${id} not found`);
-  }
-  return { ...found };
+  return apiRequest<SkillDetailResponse>(`/api/skills/${id}`);
 }
 
-export async function createSkill(
-  body: CreateSkillRequest,
-): Promise<SkillResponse> {
-  await delay(500);
-  return {
-    id: MOCK_SKILLS.length + 1,
-    skill_name: body.skill_name,
-    version: body.version ?? "1.0.0",
-    category: body.category,
-    description: body.description,
-    use_cases: body.use_cases ?? null,
-    constraints: body.constraints ?? null,
-    owner: body.owner ?? null,
-    status: body.status ?? "DRAFT",
-    created_at: new Date().toISOString(),
-  };
+export async function createSkill(body: CreateSkillRequest): Promise<SkillResponse> {
+  return apiRequest<SkillResponse>("/api/skills", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
 
 /* ─── Graph ────────────────────────────────────────────────── */
 
-export async function listGraphNodes(params?: {
-  node_type?: string;
-  limit?: number;
-  offset?: number;
-}): Promise<GraphNodeResponse[]> {
-  await delay(150);
-  let result = [...MOCK_GRAPH_NODES];
-  if (params?.node_type) {
-    result = result.filter((n) => n.node_type === params.node_type);
-  }
-  const offset = params?.offset ?? 0;
-  const limit = params?.limit ?? 100;
-  return result.slice(offset, offset + limit);
+export async function listGraphNodes(params?: { node_type?: string; limit?: number; offset?: number }): Promise<GraphNodeResponse[]> {
+  const q = new URLSearchParams();
+  if (params?.limit !== undefined) q.append("limit", String(params.limit));
+  if (params?.offset !== undefined) q.append("offset", String(params.offset));
+  if (params?.node_type) q.append("node_type", params.node_type);
+  const qs = q.toString();
+  return apiRequest<GraphNodeResponse[]>(`/api/graph/nodes${qs ? "?" + qs : ""}`);
 }
 
-export async function listGraphEdges(params?: {
-  relation_type?: string;
-  limit?: number;
-  offset?: number;
-}): Promise<GraphEdgeResponse[]> {
-  await delay(150);
-  let result = [...MOCK_GRAPH_EDGES];
-  if (params?.relation_type) {
-    result = result.filter((e) => e.relation_type === params.relation_type);
-  }
-  const offset = params?.offset ?? 0;
-  const limit = params?.limit ?? 100;
-  return result.slice(offset, offset + limit);
+export async function listGraphEdges(params?: { relation_type?: string; limit?: number; offset?: number }): Promise<GraphEdgeResponse[]> {
+  const q = new URLSearchParams();
+  if (params?.limit !== undefined) q.append("limit", String(params.limit));
+  if (params?.offset !== undefined) q.append("offset", String(params.offset));
+  if (params?.relation_type) q.append("relation_type", params.relation_type);
+  const qs = q.toString();
+  return apiRequest<GraphEdgeResponse[]>(`/api/graph/edges${qs ? "?" + qs : ""}`);
 }
 
-export async function getGraphLineage(
-  entity: string,
-  _maxDepth = 5,
-): Promise<LineageGraphResponse> {
-  await delay(300);
-  // Find the starting node
-  const startNode = MOCK_GRAPH_NODES.find(
-    (n) =>
-      n.entity_name?.toLowerCase() === entity.toLowerCase() ||
-      n.entity_id?.toLowerCase() === entity.toLowerCase(),
-  );
-  if (!startNode) {
-    return { nodes: [], edges: [] };
-  }
-
-  // BFS forward from the start node
-  const visited = new Set<number>([startNode.id]);
-  const queue = [startNode.id];
-  const reachableNodes: GraphNodeResponse[] = [startNode];
-  const reachableEdges: GraphEdgeResponse[] = [];
-
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    for (const edge of MOCK_GRAPH_EDGES) {
-      if (edge.source_node_id === current && !visited.has(edge.target_node_id)) {
-        visited.add(edge.target_node_id);
-        queue.push(edge.target_node_id);
-        reachableEdges.push(edge);
-        const targetNode = MOCK_GRAPH_NODES.find((n) => n.id === edge.target_node_id);
-        if (targetNode) reachableNodes.push(targetNode);
-      }
-    }
-  }
-
-  return { nodes: reachableNodes, edges: reachableEdges };
+export async function getGraphLineage(entity: string, maxDepth = 4): Promise<LineageGraphResponse> {
+  return apiRequest<LineageGraphResponse>(`/api/graph/lineage/${encodeURIComponent(entity)}?max_depth=${maxDepth}`);
 }
 
-export async function getGraphImpact(
-  entity: string,
-): Promise<ImpactAnalysisResponse> {
-  await delay(300);
-  const startNode = MOCK_GRAPH_NODES.find(
-    (n) =>
-      n.entity_name?.toLowerCase() === entity.toLowerCase() ||
-      n.entity_id?.toLowerCase() === entity.toLowerCase(),
-  );
-  if (!startNode) {
-    return { entity, start_nodes: [], impacted_nodes: [], total_impacted: 0 };
-  }
-
-  // BFS reverse — who depends on this entity?
-  const visited = new Set<number>([startNode.id]);
-  const impacted: ImpactAnalysisResponse["impacted_nodes"] = [];
-
-  const queue: Array<{ nodeId: number; depth: number; path: string[] }> = [
-    { nodeId: startNode.id, depth: 0, path: [startNode.entity_name ?? ""] },
-  ];
-
-  while (queue.length > 0) {
-    const { nodeId, depth, path } = queue.shift()!;
-    for (const edge of MOCK_GRAPH_EDGES) {
-      if (edge.target_node_id === nodeId && !visited.has(edge.source_node_id)) {
-        visited.add(edge.source_node_id);
-        const sourceNode = MOCK_GRAPH_NODES.find((n) => n.id === edge.source_node_id);
-        if (sourceNode) {
-          const newPath = [...path, sourceNode.entity_name ?? ""];
-          impacted.push({
-            node: sourceNode,
-            depth: depth + 1,
-            relation_type: edge.relation_type ?? "UNKNOWN",
-            path: newPath,
-          });
-          queue.push({ nodeId: sourceNode.id, depth: depth + 1, path: newPath });
-        }
-      }
-    }
-  }
-
-  return {
-    entity,
-    start_nodes: [startNode],
-    impacted_nodes: impacted,
-    total_impacted: impacted.length,
-  };
+export async function getGraphImpact(entity: string, maxDepth = 4): Promise<ImpactAnalysisResponse> {
+  return apiRequest<ImpactAnalysisResponse>(`/api/graph/impact/${encodeURIComponent(entity)}?max_depth=${maxDepth}`);
 }
 
-export async function getGraphNeighbors(
-  nodeId: number,
-): Promise<NeighborsResponse> {
-  await delay(150);
-  const neighbors: NeighborsResponse["neighbors"] = [];
-
-  for (const edge of MOCK_GRAPH_EDGES) {
-    if (edge.source_node_id === nodeId) {
-      const target = MOCK_GRAPH_NODES.find((n) => n.id === edge.target_node_id);
-      if (target) {
-        neighbors.push({
-          direction: "out",
-          relation_type: edge.relation_type,
-          confidence_score: edge.confidence_score ?? 1.0,
-          node: target,
-        });
-      }
-    }
-    if (edge.target_node_id === nodeId) {
-      const source = MOCK_GRAPH_NODES.find((n) => n.id === edge.source_node_id);
-      if (source) {
-        neighbors.push({
-          direction: "in",
-          relation_type: edge.relation_type,
-          confidence_score: edge.confidence_score ?? 1.0,
-          node: source,
-        });
-      }
-    }
-  }
-
-  return { node_id: nodeId, neighbors, total: neighbors.length };
+export async function getGraphNeighbors(nodeId: number): Promise<NeighborsResponse> {
+  return apiRequest<NeighborsResponse>(`/api/graph/neighbors/${nodeId}`);
 }
 
-export async function createGraphNode(
-  body: CreateGraphNodeRequest,
-): Promise<GraphNodeResponse> {
-  await delay(300);
-  return {
-    id: MOCK_GRAPH_NODES.length + 1,
-    node_type: body.node_type,
-    entity_id: body.entity_id,
-    entity_name: body.entity_name ?? null,
-    metadata: body.metadata ?? null,
-  };
+export async function createGraphNode(body: CreateGraphNodeRequest): Promise<GraphNodeResponse> {
+  return apiRequest<GraphNodeResponse>("/api/graph/nodes", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
 }
 
-export async function createGraphEdge(
-  body: CreateGraphEdgeRequest,
-): Promise<GraphEdgeResponse> {
-  await delay(300);
-  return {
-    id: MOCK_GRAPH_EDGES.length + 1,
-    source_node_id: body.source_node_id,
-    target_node_id: body.target_node_id,
-    relation_type: body.relation_type,
-    confidence_score: body.confidence_score,
-    created_at: new Date().toISOString(),
-  };
+export async function createGraphEdge(body: CreateGraphEdgeRequest): Promise<GraphEdgeResponse> {
+  return apiRequest<GraphEdgeResponse>("/api/graph/edges", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
 }
 
 /* ─── Lineage ──────────────────────────────────────────────── */
 
-export async function listLineage(params?: {
-  limit?: number;
-  offset?: number;
-}): Promise<LineageEventResponse[]> {
-  await delay(150);
-  const offset = params?.offset ?? 0;
-  const limit = params?.limit ?? 50;
-  return MOCK_LINEAGE.slice(offset, offset + limit);
+export async function listLineage(params?: { limit?: number; offset?: number }): Promise<LineageEventResponse[]> {
+  const q = new URLSearchParams();
+  if (params?.limit !== undefined) q.append("limit", String(params.limit));
+  if (params?.offset !== undefined) q.append("offset", String(params.offset));
+  const qs = q.toString();
+  return apiRequest<LineageEventResponse[]>(`/api/lineage${qs ? "?" + qs : ""}`);
 }
 
-export async function getLineageForProposal(
-  proposalId: string,
-): Promise<LineageEventResponse[]> {
-  await delay(150);
-  return MOCK_LINEAGE.filter((l) => l.proposal_id === proposalId);
+export async function getLineageForProposal(proposalId: string): Promise<LineageEventResponse[]> {
+  return apiRequest<LineageEventResponse[]>(`/api/lineage/${proposalId}`);
 }
 
 /* ─── Insights ─────────────────────────────────────────────── */
 
-export async function listInsights(params?: {
-  category?: string;
-  severity?: string;
-  limit?: number;
-  offset?: number;
-}): Promise<InsightItem[]> {
-  await delay(150);
-  let result = [...MOCK_INSIGHTS];
-  if (params?.category) {
-    result = result.filter((i) => i.category === params.category);
-  }
-  if (params?.severity) {
-    result = result.filter((i) => i.severity === params.severity);
-  }
-  const offset = params?.offset ?? 0;
-  const limit = params?.limit ?? 50;
-  return result.slice(offset, offset + limit);
+export async function listInsights(params?: { category?: string; severity?: string; limit?: number; offset?: number }): Promise<InsightItem[]> {
+  const q = new URLSearchParams();
+  if (params?.limit !== undefined) q.append("limit", String(params.limit));
+  if (params?.offset !== undefined) q.append("offset", String(params.offset));
+  if (params?.category) q.append("category", params.category);
+  if (params?.severity) q.append("severity", params.severity);
+  const qs = q.toString();
+  return apiRequest<InsightItem[]>(`/api/insights${qs ? "?" + qs : ""}`);
 }
 
-export async function getInsightsForProposal(
-  proposalId: string,
-): Promise<InsightItem[]> {
-  await delay(150);
-  return MOCK_INSIGHTS.filter((i) => i.proposal_id === proposalId);
+export async function getInsightsForProposal(proposalId: string): Promise<InsightItem[]> {
+  return apiRequest<InsightItem[]>(`/api/insights/${proposalId}`);
 }
 
 export async function getInsightsSummary(): Promise<{
-  total: number;
-  by_category: Record<string, number>;
-  by_severity: Record<string, number>;
-  recent_critical: InsightItem[];
+  total: number; by_category: Record<string, number>; by_severity: Record<string, number>; recent_critical: InsightItem[];
 }> {
-  await delay(200);
-  return { ...MOCK_INSIGHTS_SUMMARY };
+  return apiRequest("/api/insights/summary");
 }

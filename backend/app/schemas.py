@@ -44,6 +44,7 @@ class ProposalResponse(BaseModel):
     description_md: Optional[str] = None
     suggested_skills_to_add: Optional[List[dict]] = None
     enrichment_applied: Optional[List[str]] = None
+    extra_params: Optional[dict] = None
 
 
 class ApproveRequest(BaseModel):

@@ -11,20 +11,6 @@ from app.services import context_retrieval_service  # Phase 1 & 2 — build & st
 from app.models import Proposal
 from app.schemas import ProposalResponse, DriftItem
 from typing import Optional
-from pydantic.fields import FieldInfo
-
-# Dynamically add reasoning and reasoning_note to ProposalResponse at import time
-if "reasoning" not in ProposalResponse.model_fields:
-    ProposalResponse.model_fields["reasoning"] = FieldInfo(
-        annotation=Optional[str],
-        default=None
-    )
-if "reasoning_note" not in ProposalResponse.model_fields:
-    ProposalResponse.model_fields["reasoning_note"] = FieldInfo(
-        annotation=Optional[str],
-        default=None
-    )
-ProposalResponse.model_rebuild(force=True)
 
 router = APIRouter()
 
@@ -83,8 +69,16 @@ async def ingest_file(
     file: UploadFile = File(...),
     target_table: str = Form(...),
     description_md: Optional[str] = Form(None),
+    extra_params: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db)
 ):
+    # Parse extra_params JSON string into dict
+    extra_params_dict = None
+    if extra_params:
+        try:
+            extra_params_dict = json.loads(extra_params)
+        except (json.JSONDecodeError, TypeError):
+            raise HTTPException(status_code=400, detail="extra_params must be a valid JSON object")
     file_bytes = await file.read()
     
     # 2. Validate magic bytes
@@ -111,13 +105,16 @@ async def ingest_file(
         
     # 4. Load sample rows
     try:
-        df = pd.read_csv(tmp_path)
+        if ext.lower() == ".json":
+            df = pd.read_json(tmp_path)
+        else:
+            df = pd.read_csv(tmp_path)
     except pd.errors.EmptyDataError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid CSV file format: EmptyDataError - {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid file format: EmptyDataError - {str(e)}")
     except pd.errors.ParserError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid CSV file format: ParserError - {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid file format: ParserError - {str(e)}")
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid CSV file format: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid file format: {str(e)}")
         
     sample_rows = df.head(5).to_dict(orient="records")
     
@@ -165,7 +162,8 @@ async def ingest_file(
             pii_columns_found=[],
             llm_model_used="none",
             description_md=description_md,
-            suggested_skills_to_add=[]
+            suggested_skills_to_add=[],
+            extra_params=extra_params_dict
         )
         db.add(proposal)
         await db.commit()
@@ -204,7 +202,8 @@ async def ingest_file(
             estimated_rows=len(df),
             llm_model_used="none",
             description_md=description_md,
-            suggested_skills_to_add=[]
+            suggested_skills_to_add=[],
+            extra_params=extra_params_dict
         )
     
     # Table semantic context for AI (from knowledge graph, not PG)
@@ -286,7 +285,8 @@ async def ingest_file(
                 pii_columns_found=cached_proposal.pii_columns_found,
                 llm_model_used="cached-fallback",
                 description_md=description_md,
-                suggested_skills_to_add=[]
+                suggested_skills_to_add=[],
+                extra_params=extra_params_dict
             )
             proposal.reasoning = reasoning_note
             proposal.reasoning_note = reasoning_note
@@ -310,7 +310,8 @@ async def ingest_file(
                 reasoning=reasoning_note,
                 reasoning_note=reasoning_note,
                 description_md=description_md,
-                suggested_skills_to_add=[]
+                suggested_skills_to_add=[],
+                extra_params=extra_params_dict
             )
         else:
             if isinstance(e, HTTPException):
@@ -347,7 +348,8 @@ async def ingest_file(
         llm_model_used=ai_resp["model_used"],
         description_md=description_md,
         suggested_skills_to_add=suggested_skills,
-        enrichment_applied=enrichment_applied
+        enrichment_applied=enrichment_applied,
+        extra_params=extra_params_dict
     )
     db.add(proposal)
     await db.commit()
@@ -382,6 +384,6 @@ async def ingest_file(
         llm_model_used=ai_resp["model_used"],
         description_md=description_md,
         suggested_skills_to_add=suggested_skills,
-        enrichment_applied=enrichment_applied
+        enrichment_applied=enrichment_applied,
+        extra_params=extra_params_dict
     )
-

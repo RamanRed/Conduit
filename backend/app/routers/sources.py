@@ -1,7 +1,7 @@
 """
 Sources API — lists registered org database connections (Connectors layer).
 
-Previously read from PG warehouse_units; now backed by the connector factory.
+Backwards-compatible wrapper over the connector factory.
 """
 from fastapi import APIRouter
 from typing import List

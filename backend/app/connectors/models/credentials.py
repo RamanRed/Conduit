@@ -8,9 +8,10 @@ Adding a new provider = add its class here + register in CRED_MODELS.
 """
 
 from __future__ import annotations
-from pydantic import BaseModel, Field
-from typing import Optional, Literal
+from pydantic import BaseModel, Field, model_validator
+from typing import Optional, Literal, get_args, get_origin, Union
 from enum import Enum
+import types
 
 
 # ── Supported DB Types ─────────────────────────────────────────────────────────
@@ -30,26 +31,57 @@ class DBType(str, Enum):
     CLICKHOUSE = "clickhouse"
 
 
-# ── Per-Provider Credential Models ─────────────────────────────────────────────
-# Field names follow official driver / connection docs.
+# ── Shared validator mixin ─────────────────────────────────────────────────────
 
-class PostgreSQLCreds(BaseModel):
+def _is_optional(annotation) -> bool:
+    """Return True if the field type is Optional[X] (i.e. Union[X, None])."""
+    origin = get_origin(annotation)
+    # Python 3.10+ union: X | None  →  types.UnionType
+    if origin is Union or (hasattr(types, "UnionType") and isinstance(annotation, types.UnionType)):
+        return type(None) in get_args(annotation)
+    return False
+
+
+class StripEmptyOptionalsMixin(BaseModel):
+    """
+    Before Pydantic validates fields, replace empty-string values with None
+    for every field that is declared Optional[...].
+
+    This makes the frontend safe: it can send '' for an un-filled optional
+    input instead of omitting the key entirely, without breaking validation.
+    """
+
+    @model_validator(mode="before")
+    @classmethod
+    def strip_empty_strings_on_optional_fields(cls, values: dict) -> dict:
+        if not isinstance(values, dict):
+            return values
+        for field_name, field_info in cls.model_fields.items():
+            if field_name in values and values[field_name] == "":
+                if _is_optional(field_info.annotation):
+                    values[field_name] = None
+        return values
+
+
+# ── Per-Provider Credential Models ─────────────────────────────────────────────
+
+class PostgreSQLCreds(StripEmptyOptionalsMixin):
     """
     Official params: PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD, PGSSLMODE
     Ref: https://www.postgresql.org/docs/current/libpq-envars.html
     """
     host:        str
     port:        int = 5432
-    database:    str                                                            # PGDATABASE / dbname
-    user:        str                                                            # PGUSER
+    database:    str
+    user:        str
     password:    str
-    sslmode:     Optional[Literal["disable","allow","prefer",
-                                   "require","verify-ca","verify-full"]] = "prefer"
+    sslmode:     Optional[Literal["disable", "allow", "prefer",
+                                   "require", "verify-ca", "verify-full"]] = "prefer"
     sslrootcert: Optional[str] = None
     hostaddr:    Optional[str] = None
 
 
-class MySQLCreds(BaseModel):
+class MySQLCreds(StripEmptyOptionalsMixin):
     """
     Official params: Host, Port, Database, Username, Password, SSL
     Ref: https://dev.mysql.com/doc/refman/8.0/en/connecting.html
@@ -65,20 +97,20 @@ class MySQLCreds(BaseModel):
     ssl_key:  Optional[str] = None
 
 
-class MongoDBCreds(BaseModel):
+class MongoDBCreds(StripEmptyOptionalsMixin):
     """
     Official params: connection string URI or individual host/port + auth options
     Ref: https://www.mongodb.com/docs/manual/reference/connection-string/
     """
-    connection_string:        Optional[str]  = None        # mongodb:// URI (takes priority)
-    host:                     Optional[str]  = None
-    port:                     Optional[int]  = 27017
-    username:                 Optional[str]  = None
-    password:                 Optional[str]  = None
-    authentication_source:    str            = "admin"     # authSource
-    authentication_mechanism: Optional[str]  = None        # e.g. SCRAM-SHA-256
-    replica_set:              Optional[str]  = None        # replicaSet
-    tls:                      bool           = False
+    connection_string:        Optional[str] = None        # mongodb:// URI (takes priority)
+    host:                     Optional[str] = None
+    port:                     Optional[int] = 27017
+    username:                 Optional[str] = None
+    password:                 Optional[str] = None
+    authentication_source:    str           = "admin"
+    authentication_mechanism: Optional[str] = None
+    replica_set:              Optional[str] = None
+    tls:                      bool          = False
 
     def resolved_uri(self) -> str:
         if self.connection_string:
@@ -90,16 +122,16 @@ class MongoDBCreds(BaseModel):
         return f"mongodb://{auth}{self.host}:{self.port}{tls_param}"
 
 
-class Neo4jCreds(BaseModel):
+class Neo4jCreds(StripEmptyOptionalsMixin):
     """
     Official params: host/uri, login, password, database, encryption
-    Ref: https://neo4j.com/docs/driver-manual/current/client-applications/#driver-connection-uri
+    Ref: https://neo4j.com/docs/driver-manual/current/client-applications/
     Note: Neo4j calls the username field 'login', not 'user'.
     """
     uri:        Optional[str] = None          # bolt:// or neo4j:// (takes priority)
     host:       Optional[str] = None
     port:       int           = 7687
-    login:      str                           # 'login' — as per Neo4j driver docs
+    login:      str
     password:   str
     database:   str           = "neo4j"
     encryption: bool          = False
@@ -108,7 +140,7 @@ class Neo4jCreds(BaseModel):
         return self.uri or f"bolt://{self.host}:{self.port}"
 
 
-class SupabaseCreds(BaseModel):
+class SupabaseCreds(StripEmptyOptionalsMixin):
     """
     Official params: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
     For direct Postgres access: database_host, database_password
@@ -116,26 +148,26 @@ class SupabaseCreds(BaseModel):
     SECURITY: service_role_key must NEVER be exposed to the browser.
     """
     supabase_url:              str
-    supabase_service_role_key: str            # Backend-only — never send to browser
-    database_host:             Optional[str]  = None   # db.<ref>.supabase.co
-    database_password:         Optional[str]  = None
-    database_port:             int            = 5432
-    database_name:             str            = "postgres"
+    supabase_service_role_key: str
+    database_host:             Optional[str] = None
+    database_password:         Optional[str] = None
+    database_port:             int           = 5432
+    database_name:             str           = "postgres"
 
 
-class DatabricksCreds(BaseModel):
+class DatabricksCreds(StripEmptyOptionalsMixin):
     """
-    Official params: server_hostname (host), http_path, access_token, catalog, schema
+    Official params: server_hostname, http_path, access_token, catalog, schema
     Ref: https://docs.databricks.com/integrations/jdbc-odbc-bi.html
     """
-    host:         str                          # workspace host / server_hostname
-    http_path:    str                          # /sql/1.0/warehouses/<id>
+    host:         str
+    http_path:    str
     access_token: str
     catalog:      Optional[str] = None
-    schema_name:  Optional[str] = None         # 'schema' reserved in Python
+    schema_name:  Optional[str] = None
 
 
-class SnowflakeCreds(BaseModel):
+class SnowflakeCreds(StripEmptyOptionalsMixin):
     """
     Official params: account, user, password, warehouse, database, schema, role
     Ref: https://docs.snowflake.com/en/developer-guide/python-connector/python-connector-connect
@@ -145,16 +177,16 @@ class SnowflakeCreds(BaseModel):
     password:    str
     warehouse:   Optional[str] = None
     database:    Optional[str] = None
-    schema_name: Optional[str] = None         # maps to 'schema' param
+    schema_name: Optional[str] = None
     role:        Optional[str] = None
 
 
-class RedisCreds(BaseModel):
+class RedisCreds(StripEmptyOptionalsMixin):
     """
-    Official params: redis:// or rediss:// URI, or host/port/password/username/db
+    Official params: redis:// URI, or host/port/password/username/db
     Ref: https://redis.io/docs/connect/clients/python/
     """
-    url:      Optional[str] = None            # redis://[:password@]host[:port][/db]
+    url:      Optional[str] = None
     host:     Optional[str] = None
     port:     int           = 6379
     password: Optional[str] = None
@@ -172,48 +204,45 @@ class RedisCreds(BaseModel):
         return f"redis://{auth}{self.host or 'localhost'}:{self.port}/{self.db}"
 
 
-class PineconeCreds(BaseModel):
+class PineconeCreds(StripEmptyOptionalsMixin):
     """
     Official params: api_key, index_name, environment (legacy), namespace
     Ref: https://docs.pinecone.io/docs/quickstart
     """
     api_key:     str
     index_name:  Optional[str] = None
-    environment: Optional[str] = None        # Legacy (pre-serverless)
+    environment: Optional[str] = None
     project_id:  Optional[str] = None
     namespace:   Optional[str] = None
 
 
-class BigQueryCreds(BaseModel):
+class BigQueryCreds(StripEmptyOptionalsMixin):
     """
     Official params: project_id, service account JSON, dataset, location
     Ref: https://cloud.google.com/bigquery/docs/authentication/service-account-file
     """
     project_id:           str
-    service_account_json: str               # Full JSON content as string
+    service_account_json: str
     dataset:              Optional[str] = None
     location:             str           = "US"
 
 
-class SQLiteCreds(BaseModel):
-    """
-    SQLite is file-based — only needs a file path.
-    Ref: https://docs.python.org/3/library/sqlite3.html
-    """
+class SQLiteCreds(StripEmptyOptionalsMixin):
+    """SQLite is file-based — only needs a file path."""
     file_path: str
 
 
-class ClickHouseCreds(BaseModel):
+class ClickHouseCreds(StripEmptyOptionalsMixin):
     """
-    Official params: host, port, database, username, password, protocol/TLS
+    Official params: host, port, database, username, password, TLS
     Ref: https://clickhouse.com/docs/en/integrations/python
     """
     host:     str
-    port:     int         = 8123
-    database: str         = "default"
-    username: str         = "default"        # 'username' — not 'user'
-    password: Optional[str] = ""
-    tls:      bool        = False
+    port:     int          = 8123
+    database: str          = "default"
+    username: str          = "default"
+    password: Optional[str] = None
+    tls:      bool         = False
 
 
 # ── Request / Response DTOs ────────────────────────────────────────────────────
@@ -236,11 +265,10 @@ class QueryRequest(BaseModel):
 
 
 # ── Credential Validator Registry ──────────────────────────────────────────────
-# ADDING A NEW PROVIDER: Add its model class above, then add one line here.
 
 CRED_MODELS: dict = {
     "postgresql": PostgreSQLCreds,
-    "postgres":   PostgreSQLCreds,    # alias
+    "postgres":   PostgreSQLCreds,
     "mysql":      MySQLCreds,
     "mongodb":    MongoDBCreds,
     "neo4j":      Neo4jCreds,
@@ -256,9 +284,13 @@ CRED_MODELS: dict = {
 
 
 def validate_credentials(db_type: str, raw: dict) -> BaseModel:
-    """Validate a raw credentials dict against the provider's Pydantic model."""
+    """Validate a raw credentials dict against the provider's Pydantic model.
+    Empty strings on Optional fields are automatically coerced to None by
+    StripEmptyOptionalsMixin before field validation runs."""
     model = CRED_MODELS.get(db_type.lower())
     if not model:
-        raise ValueError(f"Unknown provider '{db_type}'. "
-                         f"Supported: {list(CRED_MODELS.keys())}")
+        raise ValueError(
+            f"Unknown provider '{db_type}'. "
+            f"Supported: {list(CRED_MODELS.keys())}"
+        )
     return model(**raw)

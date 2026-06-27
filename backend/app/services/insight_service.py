@@ -54,7 +54,7 @@ def _compute_stats(df: pd.DataFrame) -> dict:
             ) if len(top_vals) > 0 else 0
 
         # Numeric stats
-        if pd.api.types.is_numeric_dtype(df[col]):
+        if pd.api.types.is_numeric_dtype(df[col]) and not pd.api.types.is_bool_dtype(df[col]):
             col_stats["mean"] = round(float(df[col].mean()), 2) if not df[col].isna().all() else None
             col_stats["median"] = round(float(df[col].median()), 2) if not df[col].isna().all() else None
             col_stats["std"] = round(float(df[col].std()), 2) if not df[col].isna().all() else None

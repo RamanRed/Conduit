@@ -36,7 +36,9 @@ async def execute_proposal(
 
     filepath = file_path
     try:
-        df = pd.read_csv(filepath)
+        import os as _os
+        _ext = _os.path.splitext(filepath or "")[-1].lower()
+        df = pd.read_json(filepath) if _ext == ".json" else pd.read_csv(filepath)
     except Exception as e:
         proposal.status = "FAILED"
         await db.commit()
@@ -46,7 +48,8 @@ async def execute_proposal(
         raise e
 
     import hashlib
-    namespace = {"pd": pd, "df": df, "hashlib": hashlib}
+    import numpy as np
+    namespace = {"pd": pd, "df": df, "hashlib": hashlib, "np": np}
     try:
         exec(generated_code, namespace)
         transform_fn = namespace["transform"]

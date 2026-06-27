@@ -239,7 +239,15 @@ async def _search_skills_in_graph(keywords: List[str], limit: int) -> List[dict]
         """,
         {},
     )
-    kw_lower = [k.lower() for k in keywords]
+    kw_lower = []
+    for k in keywords:
+        k_low = k.lower()
+        kw_lower.append(k_low)
+        if "_" in k_low:
+            kw_lower.append(k_low.replace("_", " "))
+            kw_lower.extend([t for t in k_low.split("_") if len(t) > 2])
+    kw_lower = list(set(kw_lower))
+
     matches = []
     for r in records:
         meta = json.loads(r.get("meta") or "{}")

@@ -174,7 +174,13 @@ Recommend the best target table(s) from the registered tables list. Only suggest
             max_tokens=1500
         )
         content = response.choices[0].message.content
-        return json.loads(content)
+        # Strip markdown code fences the LLM may wrap around JSON
+        import re
+        stripped = content.strip()
+        m = re.match(r"^```(?:json|JSON)?\s*\n?(.*?)```\s*$", stripped, re.DOTALL)
+        if m:
+            stripped = m.group(1).strip()
+        return json.loads(stripped)
     except Exception as e:
         return {
             "data_understanding": "Error invoking AI service for semantic understanding.",

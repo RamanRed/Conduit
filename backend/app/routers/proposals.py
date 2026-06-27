@@ -42,7 +42,9 @@ async def list_proposals(
                 estimated_rows=p.estimated_rows or 0,
                 llm_model_used=p.llm_model_used or "llama-3.3-70b-versatile",
                 description_md=p.description_md,
-                suggested_skills_to_add=p.suggested_skills_to_add
+                suggested_skills_to_add=p.suggested_skills_to_add,
+                enrichment_applied=p.enrichment_applied,
+                extra_params=p.extra_params
             )
         )
     return results
@@ -69,7 +71,9 @@ async def get_proposal(proposal_id: str, db: AsyncSession = Depends(get_db)):
         estimated_rows=proposal.estimated_rows or 0,
         llm_model_used=proposal.llm_model_used or "llama-3.3-70b-versatile",
         description_md=proposal.description_md,
-        suggested_skills_to_add=proposal.suggested_skills_to_add
+        suggested_skills_to_add=proposal.suggested_skills_to_add,
+        enrichment_applied=proposal.enrichment_applied,
+        extra_params=proposal.extra_params
     )
 
 

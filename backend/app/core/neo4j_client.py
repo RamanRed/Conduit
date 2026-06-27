@@ -1,5 +1,6 @@
+import asyncio
 import logging
-from typing import Any, AsyncGenerator
+from typing import Any
 from neo4j import AsyncGraphDatabase
 from app.core.config import settings
 
@@ -11,51 +12,52 @@ if not logger.handlers:
     logger.addHandler(handler)
     logger.propagate = False
 
+
 class Neo4jClient:
     def __init__(self) -> None:
         self.driver = None
+        self._database: str | None = None
 
     async def connect(self) -> None:
-        """Initialize the Neo4j driver and verify connection."""
         if self.driver is not None:
             return
-        
+
         uri = settings.NEO4J_URI
         user = settings.NEO4J_USER
         password = settings.NEO4J_PASSWORD
-        
-        logger.info(f"Connecting to Neo4j at {uri}...")
+        self._database = settings.NEO4J_DATABASE or None
+
+        logger.info(f"Connecting to Neo4j at {uri} (database={self._database or 'default'})...")
         try:
             self.driver = AsyncGraphDatabase.driver(
                 uri,
-                auth=(user, password)
+                auth=(user, password),
+                max_connection_lifetime=1800.0,
+                liveness_check_timeout=30.0,
             )
-            # Verify connectivity
             await self.driver.verify_connectivity()
             logger.info("Connected to Neo4j successfully!")
-            
-            # Setup schema constraints
             await self.init_schema()
         except Exception as exc:
             logger.error(f"Failed to connect to Neo4j: {exc}")
             self.driver = None
-            # Non-fatal: core audit/ingest still works; graph features degrade gracefully
 
     async def init_schema(self) -> None:
-        """Create constraints and indexes in Neo4j."""
         if self.driver is None:
             return
-        
-        async with self.driver.session() as session:
-            # Enforce uniqueness on entity_id for all GraphNode labeled nodes
-            logger.info("Creating Neo4j uniqueness constraints...")
-            await session.run(
-                "CREATE CONSTRAINT uq_graph_node_entity_id IF NOT EXISTS "
-                "FOR (n:GraphNode) REQUIRE n.entity_id IS UNIQUE"
-            )
+        try:
+            async with self.driver.session(database=self._database) as session:
+                await asyncio.wait_for(
+                    session.run(
+                        "CREATE CONSTRAINT uq_graph_node_entity_id IF NOT EXISTS "
+                        "FOR (n:GraphNode) REQUIRE n.entity_id IS UNIQUE"
+                    ),
+                    timeout=30.0,
+                )
+        except Exception as exc:
+            logger.warning(f"Neo4j schema init skipped: {exc}")
 
     async def close(self) -> None:
-        """Close the Neo4j driver cleanly."""
         if self.driver is not None:
             logger.info("Closing Neo4j connection...")
             await self.driver.close()
@@ -68,14 +70,12 @@ class Neo4jClient:
         return self.driver
 
     async def execute_query(self, query: str, parameters: dict = None) -> list:
-        """Helper to run a query in an async read/write session and return records as dicts."""
         if self.driver is None:
             raise RuntimeError("Neo4j driver is not initialized.")
-        
-        async with self.driver.session() as session:
+        async with self.driver.session(database=self._database) as session:
             result = await session.run(query, parameters or {})
             records = await result.data()
             return records
 
-# Singleton instance
+
 neo4j_client = Neo4jClient()
