@@ -439,8 +439,17 @@ class DBConnectionFactory:
             # query must be JSON: {"index_name": "...", "vector": [...], "top_k": 10}
             q     = json.loads(query)
             index = conn.Index(q["index_name"])
-            res   = index.query(vector=q["vector"], top_k=q.get("top_k", 10))
-            return [m.__dict__ for m in res.matches]
+            res   = index.query(vector=q["vector"], top_k=q.get("top_k", 10),
+                                include_metadata=True)
+            # Serialize matches safely — Pinecone match objects have circular refs in __dict__
+            matches = []
+            for m in res.matches:
+                matches.append({
+                    "id":       m.id,
+                    "score":    m.score,
+                    "metadata": dict(m.metadata) if m.metadata else {},
+                })
+            return matches
 
         return []
 
