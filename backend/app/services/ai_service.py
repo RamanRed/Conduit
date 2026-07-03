@@ -1,3 +1,14 @@
+"""
+ai_service.py
+─────────────
+Purpose:
+    Handles LLM query orchestration and prompt generation via Groq API.
+
+Use Cases:
+    - Generates transformation python scripts for incoming files based on target schema.
+    - Orchestrates schema drift detection and provides reasoning.
+"""
+
 import json
 import asyncio
 import re

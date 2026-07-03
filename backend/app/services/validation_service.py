@@ -1,3 +1,15 @@
+"""
+validation_service.py
+─────────────────────
+Purpose:
+    Implements AST checks and file metadata verification.
+
+Use Cases:
+    - Validates file magic bytes and size limits.
+    - Runs syntax checks and blocks unsafe statements (imports, sys, eval, subprocess) 
+      in generated Python scripts.
+"""
+
 import ast
 
 # python-magic requires libmagic.dll on Windows.

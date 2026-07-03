@@ -1,6 +1,12 @@
 """
-Connector Introspection — pull live schema from a registered connection
-and publish it into the Neo4j knowledge graph for AI use.
+connector_introspection_service.py
+──────────────────────────────────
+Purpose:
+    Orchestrates target schema introspection from database connections.
+
+Use Cases:
+    - Queries information_schema columns for registered database nodes.
+    - Syncs live database table metadata directly into the Neo4j knowledge graph.
 """
 from __future__ import annotations
 

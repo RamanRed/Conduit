@@ -1,3 +1,10 @@
+"""
+graph_service.py
+────────────────
+Purpose:
+    Provides wrapper functions for managing nodes, relationships, and queries in Neo4j.
+"""
+
 import json
 import logging
 from typing import List, Optional

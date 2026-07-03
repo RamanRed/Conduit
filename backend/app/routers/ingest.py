@@ -1,3 +1,13 @@
+"""
+ingest.py
+─────────
+Purpose:
+    FastAPI router defining the primary data ingestion pipeline entry point.
+
+Use Cases:
+    - POST /api/ingest: Receives file uploads, performs validation, runs AI schema comparison, and returns execution proposals.
+"""
+
 from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 import uuid

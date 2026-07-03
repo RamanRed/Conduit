@@ -1,19 +1,16 @@
 """
-Extension models for Conduit:
-  - Skill Registry   (schema: conduit_skills)
-  - Relationship Graph (schema: conduit_graph)
-  - Data Lineage     (schema: conduit_lineage)
+extension_models.py
+───────────────────
+Purpose:
+    Defines SQLAlchemy ORM models for additive platform extensions including:
+      - Skill Registry (conduit_skills schema)
+      - Data Lineage (conduit_lineage schema)
+      - Proposal Context (conduit_skills schema)
 
-These models are purely additive.  Nothing in this file touches or
-imports anything from models.py or any existing router/service.
-
-STAGE 1 FIX: Added UniqueConstraint to GraphNode (node_type, entity_id)
-             and GraphEdge (source_node_id, target_node_id, relation_type).
-             Without these, ON CONFLICT DO NOTHING in seed SQL does nothing
-             useful and get_or_create_* can produce duplicates across restarts.
-
-STAGE 1 FIX: Added UniqueConstraint to SkillIssueReference (skill_id, issue_reference)
-             so re-running seed SQL is idempotent.
+Usage:
+    - Used by the Skill Registry service to store, retrieve, and categorize transformation scripts.
+    - Used by the Lineage service to track schema evolution history.
+    - Used by the Context Retrieval service to store pre-generated prompt context bundles.
 """
 from sqlalchemy import (
     Column, Integer, String, Boolean, Float, Text,

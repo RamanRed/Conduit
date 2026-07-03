@@ -1,17 +1,12 @@
 """
-Graph API router — all endpoints are additive.
-Uses Neo4j backend under the hood and interfaces with PostgreSQL for audits.
+graph.py
+────────
+Purpose:
+    FastAPI router defining endpoints for interacting with the Neo4j relationship graph.
 
-Endlines:
-  GET  /api/graph/nodes                  list nodes
-  POST /api/graph/nodes                  create node
-  GET  /api/graph/edges                  list edges
-  POST /api/graph/edges                  create edge
-  GET  /api/graph/neighbors/{node_id}    immediate neighbours
-  GET  /api/graph/lineage/{entity}       BFS lineage traversal
-  GET  /api/graph/impact/{entity}        impact analysis
-  POST /api/graph/sync                   manual PG-to-Neo4j catalog sync
-  GET  /api/graph/audit/{entity_id}      fetch PG change history for a node
+Use Cases:
+    - Traverses nodes/edges in the database network.
+    - Runs impact analysis and lineage tracing queries using BFS traversal.
 """
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession

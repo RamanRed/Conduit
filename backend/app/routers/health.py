@@ -1,3 +1,13 @@
+"""
+health.py
+─────────
+Purpose:
+    FastAPI router defining endpoints for application health checks.
+
+Use Cases:
+    - GET /api/health: Validates connectivity to PostgreSQL, Neo4j, and Mock AI settings.
+"""
+
 from fastapi import APIRouter
 from app.core.config import settings
 from app.core.neo4j_client import neo4j_client

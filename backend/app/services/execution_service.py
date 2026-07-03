@@ -1,3 +1,14 @@
+"""
+execution_service.py
+────────────────────
+Purpose:
+    Executes generated data transformation Python scripts.
+
+Use Cases:
+    - Runs python code in a restricted/sandboxed namespace.
+    - Inserts valid rows into PostgreSQL and isolates failures in quarantine tables.
+"""
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 import pandas as pd

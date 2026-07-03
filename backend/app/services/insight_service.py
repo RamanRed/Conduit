@@ -1,12 +1,11 @@
 """
-Post-load insight generation service.
+insight_service.py
+──────────────────
+Purpose:
+    Performs statistical analyses on dataframes to extract insights.
 
-After data lands in Postgres, this service runs statistical analysis on the
-transformed DataFrame and then calls the LLM to generate natural-language
-insights about patterns, anomalies, and data quality issues.
-
-All operations are wrapped in try/except — insight failure never blocks the
-main execution pipeline.
+Use Cases:
+    - Scans for outliers, anomalies, and duplicate records.
 """
 
 import json

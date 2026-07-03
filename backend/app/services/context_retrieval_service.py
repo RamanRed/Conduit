@@ -1,9 +1,11 @@
 """
-Context Retrieval Service
-Builds AI context bundles from the Neo4j knowledge graph + skills.
+context_retrieval_service.py
+────────────────────────────
+Purpose:
+    Builds the context bundle required by the LLM during proposal generation.
 
-Stored in Neo4j (PROPOSAL_CONTEXT nodes), NOT PostgreSQL.
-PostgreSQL retains audit/history only.
+Use Cases:
+    - Traces entity dependencies and matches relevant transformation skills.
 """
 from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession

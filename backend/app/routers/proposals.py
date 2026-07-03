@@ -1,3 +1,15 @@
+"""
+proposals.py
+────────────
+Purpose:
+    FastAPI router defining endpoints for managing generated data transformation proposals.
+
+Use Cases:
+    - GET /api/proposals: Query pending/executed proposals.
+    - POST /api/proposals/{id}/approve: Execute approved proposal code against the warehouse.
+    - POST /api/proposals/{id}/reject: Mark proposal as rejected with reason.
+"""
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select

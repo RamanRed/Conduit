@@ -1,8 +1,23 @@
+"""
+models.py
+─────────
+Purpose:
+    Defines the core SQLAlchemy ORM models representing tables 
+    in the `conduit` schema of the PostgreSQL database.
+
+Models:
+    - `PipelineSkillsLedger`: Logs executions of transformation scripts.
+    - `QuarantineRecord`: Stores raw CSV rows that failed validation and execution rules.
+    - `Proposal`: Stores ingestion proposals, generated code, gateway state, and audit logs.
+    - `InsightRecord`: Stores AI-generated business/data insights for proposals.
+"""
+
 from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, JSON
 from sqlalchemy.orm import declarative_base
 from datetime import datetime
 
 Base = declarative_base()
+
 
 # NOTE: WarehouseUnit, SubProject, TableMetadata, AttributeMetadata removed.
 # Connections are now managed by DBConnectionFactory (app/connectors/db_factory.py).

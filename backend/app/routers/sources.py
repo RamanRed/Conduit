@@ -1,7 +1,8 @@
 """
-Sources API — lists registered org database connections (Connectors layer).
-
-Backwards-compatible wrapper over the connector factory.
+sources.py
+──────────
+Purpose:
+    FastAPI router defining endpoints for listing registered warehouse connections.
 """
 from fastapi import APIRouter
 from typing import List

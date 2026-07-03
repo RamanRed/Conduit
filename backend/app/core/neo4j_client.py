@@ -1,3 +1,14 @@
+"""
+neo4j_client.py
+───────────────
+Purpose:
+    Provides an asynchronous client wrapper for the Neo4j Graph Database.
+
+Use Cases:
+    - Verifies Neo4j database connectivity at startup.
+    - Manages graph connection sessions and executes Cypher queries.
+"""
+
 import asyncio
 import logging
 from typing import Any

@@ -1,8 +1,8 @@
 """
-Skill Registry Service
-Responsibilities: register, retrieve, list, and search skills.
-All operations are purely additive — this service never touches
-any table in the conduit schema.
+skill_registry_service.py
+─────────────────────────
+Purpose:
+    Manages the registry of reusable transformation skills.
 """
 from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession

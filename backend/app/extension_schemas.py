@@ -1,6 +1,12 @@
 """
-Pydantic schemas for the Conduit extension layer.
-These schemas are purely additive — nothing in schemas.py is changed.
+extension_schemas.py
+────────────────────
+Purpose:
+    Defines Pydantic models for request/response serialization 
+    within the additive platform extensions (Skill Registry, Graph, Lineage, Context).
+
+Usage:
+    - Provides data validation and serialization/deserialization for routers in the extension layer.
 """
 from pydantic import BaseModel, Field
 from typing import List, Optional, Any, Dict

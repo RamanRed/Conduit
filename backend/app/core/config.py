@@ -1,3 +1,13 @@
+"""
+config.py
+─────────
+Purpose:
+    Loads and validates system environment variables using Pydantic BaseSettings.
+
+Use Cases:
+    - Provides global configuration variables (GROQ_API_KEY, WAREHOUSE_DB_URL, NEO4J credentials, etc.).
+"""
+
 from pydantic_settings import BaseSettings
 from pydantic import model_validator
 from typing import Optional

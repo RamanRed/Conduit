@@ -1,13 +1,11 @@
 """
-Connectors API router — exposes the universal database connection factory
-as REST endpoints.
+connectors.py
+─────────────
+Purpose:
+    FastAPI router defining endpoints for managing external database connectors.
 
-Endpoints:
-  POST   /api/connectors/register      Register a new external database connection
-  GET    /api/connectors               List all registered connections
-  POST   /api/connectors/query         Execute a query against a registered connection
-  DELETE /api/connectors/{conn_id}     Disconnect and remove a connection
-  GET    /api/connectors/providers     List all supported database provider types
+Use Cases:
+    - GET /api/connectors: List connections and register new database datasources.
 """
 
 from fastapi import APIRouter, HTTPException

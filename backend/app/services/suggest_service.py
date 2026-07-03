@@ -1,3 +1,10 @@
+"""
+suggest_service.py
+──────────────────
+Purpose:
+    Provides AI suggestions for new skills based on observed anomalies.
+"""
+
 import json
 import re
 import pandas as pd

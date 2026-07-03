@@ -1,3 +1,16 @@
+"""
+main.py
+───────
+Purpose:
+    FastAPI Application entry point and configuration.
+    Initializes middleware, routers, database schemas, and Neo4j seeding at startup.
+
+Use Cases:
+    - Bootstraps the web application framework.
+    - Handles CORS configurations.
+    - Triggers migrations and seeds the Neo4j demo database.
+"""
+
 import logging
 import time
 from fastapi import FastAPI, Request
@@ -6,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.database import engine
 from app.models import Base
 from app.extension_models import ExtBase
+
 
 from app.routers import ingest, proposals, audit, quarantine, sources
 from app.routers import skills, graph, lineage

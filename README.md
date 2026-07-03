@@ -41,28 +41,24 @@ This is the fastest way to get started. It containerizes the FastAPI backend, Po
 - **Groq API Key** — get one free at [console.groq.com](https://console.groq.com)
 
 ### 1. Configure Environment
-Create a `.env` file in the project root:
-
-```env
-GROQ_API_KEY=gsk_your_key_here
-WAREHOUSE_DB_URL=postgresql+asyncpg://user:password@warehouse-db:5432/warehousedb
-SOURCE_DB_URL=postgresql+asyncpg://user:password@source-db:5432/sourcedb
-ENVIRONMENT=development
-MOCK_AI=False
+Copy the example environment configuration in the project root:
+```bash
+cp .env.example .env
 ```
+Open the newly created `.env` file and set your `GROQ_API_KEY` (and any other desired variables).
 
 ### 2. Start the Backend Infrastructure
 Run the following command in the project root directory:
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
 This spins up four services:
-- `conduit-api-1` (FastAPI backend server on port `8000`)
-- `conduit-warehouse-db-1` (PostgreSQL target warehouse database on port `5432`)
-- `conduit-source-db-1` (PostgreSQL source database on port `5433`)
-- `conduit-neo4j-1` (Neo4j Graph Database on ports `7474`/`7687`)
+- `api` (FastAPI backend server on port `8000`)
+- `warehouse-db` (PostgreSQL target warehouse database on port `5432`)
+- `source-db` (PostgreSQL source database on port `5433`)
+- `neo4j` (Neo4j Graph Database on ports `7474`/`7687`)
 
-Verify backend is healthy:
+Verify the backend is healthy:
 ```bash
 curl http://localhost:8000/api/health
 # → {"status":"ok","mock_ai":false,"environment":"development","neo4j":"connected"}
@@ -71,14 +67,10 @@ curl http://localhost:8000/api/health
 ### 3. Load Database Seed Data (One-time)
 Populate the PostgreSQL skills registry and lineage tables:
 
-* **Linux / macOS / Git Bash**:
-  ```bash
-  docker exec -i conduit-warehouse-db-1 psql -U user -d warehousedb < db/seed_extensions.sql
-  ```
-* **Windows PowerShell**:
-  ```powershell
-  cmd.exe /c "docker exec -i conduit-warehouse-db-1 psql -U user -d warehousedb < db/seed_extensions.sql"
-  ```
+Run this command in the project root (works on Windows CMD/PowerShell, Linux, and macOS):
+```bash
+docker compose exec -T warehouse-db psql -U user -d warehousedb < db/seed_extensions.sql
+```
 > [!NOTE]
 > SQL errors regarding `conduit_graph.graph_nodes` are expected and completely safe to ignore. The relationship graph has been migrated to Neo4j.
 
@@ -122,20 +114,11 @@ psql -U conduit_user -d warehousedb < db/seed_extensions.sql
 ```
 
 ### 2. Configure Environment
-Create a `.env` file in the project root. Make sure the credentials match your local Postgres and Neo4j configurations:
-
-```env
-GROQ_API_KEY=gsk_your_key_here
-WAREHOUSE_DB_URL=postgresql+asyncpg://conduit_user:password@localhost:5432/warehousedb
-SOURCE_DB_URL=postgresql+asyncpg://conduit_user:password@localhost:5432/sourcedb
-ENVIRONMENT=development
-MOCK_AI=False
-
-# Neo4j Settings (Local or Remote Aura Instance)
-NEO4J_URI=bolt://localhost:7687
-NEO4J_USERNAME=neo4j
-NEO4J_PASSWORD=conduit_graph_2026
+Copy the example environment configuration in the `backend/` directory:
+```bash
+cp backend/.env.example backend/.env
 ```
+Open `backend/.env` and update the database URLs and Neo4j credentials to match your local setup, and configure your `GROQ_API_KEY`.
 
 ### 3. Run the Backend API Natively
 Open a terminal in the `backend/` directory, set up your virtual environment, install the dependencies, and start `uvicorn`:
@@ -197,11 +180,27 @@ curl -X POST http://localhost:8000/api/proposals/<proposal_id>/approve \
 Verify rows successfully landed in the database:
 - **With Docker**:
   ```bash
-  docker exec -it conduit-warehouse-db-1 psql -U user -d warehousedb -c "SELECT COUNT(*) FROM public.orders_clean;"
+  docker compose exec warehouse-db psql -U user -d warehousedb -c "SELECT COUNT(*) FROM public.orders_clean;"
   ```
 - **Without Docker**:
   ```bash
   psql -U conduit_user -d warehousedb -c "SELECT COUNT(*) FROM public.orders_clean;"
+  ```
+
+### Running the Automated Test Suite
+
+A comprehensive test suite is provided to verify all 12 system scenarios (A–L).
+
+- **With Docker**:
+  Ensure the containers are running, then run the checks inside the `api` container:
+  ```bash
+  docker compose exec api python run_checks.py
+  ```
+
+- **Without Docker**:
+  Ensure the backend API is running locally, activate your virtual environment, install the dependencies, and run:
+  ```bash
+  python run_checks.py
   ```
 
 ---
